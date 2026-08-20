@@ -1,0 +1,32 @@
+bundle:
+  name: product_launch_forecast
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Dedicated UC catalog for this project (one per environment)
+    default: product_launches_${bundle.target}
+  warehouse_id:
+    description: SQL warehouse ID for AI functions and queries
+  notification_email:
+    description: Email for job failure alerts
+    default: patricia.ferreiro@databricks.com
+  volume_path:
+    description: Volume path where client documents are dropped
+    default: /Volumes/${var.catalog}/bronze/raw_documents
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://your-dev-workspace.cloud.databricks.com
+
+  prod:
+    mode: production
+    workspace:
+      host: https://your-prod-workspace.cloud.databricks.com
+    run_as:
+      service_principal_name: ${var.prod_sp_name}

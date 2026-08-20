@@ -1,0 +1,39 @@
+resources:
+  jobs:
+    product_launch_forecast_job:
+      name: "[${bundle.target}] Product Launch Forecast Pipeline"
+      description: "End-to-end pipeline: parse client documents, extract product data, run forecast"
+
+      schedule:
+        quartz_cron_expression: "0 0 8 * * ?"  # Daily at 8 AM
+        timezone_id: "Europe/Madrid"
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      tasks:
+        - task_key: setup_catalog
+          notebook_task:
+            notebook_path: ../src/setup_catalog.sql
+            source: WORKSPACE
+            warehouse_id: ${var.warehouse_id}
+          description: "Create catalog, schemas, and tables if they don't exist"
+
+        - task_key: extract_product_data
+          depends_on:
+            - task_key: setup_catalog
+          notebook_task:
+            notebook_path: ../src/extraction/extract_product_data.sql
+            source: WORKSPACE
+            warehouse_id: ${var.warehouse_id}
+          description: "Parse documents and extract standardized product launch data"
+
+        - task_key: run_forecast
+          depends_on:
+            - task_key: extract_product_data
+          notebook_task:
+            notebook_path: ../src/forecasting/run_forecast.sql
+            source: WORKSPACE
+            warehouse_id: ${var.warehouse_id}
+          description: "Generate 12-week launch forecasts per client"
