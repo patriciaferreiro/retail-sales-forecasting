@@ -31,18 +31,20 @@
 
 # DBTITLE 1,Create silver table schema for standardized product launches
 # MAGIC %sql
-# MAGIC -- Standardized product launch table — the extraction target
+# MAGIC -- Standardized product launch table — one row per product per document
+# MAGIC -- Supports multiple products per document, identifier transitions (old → new),
+# MAGIC -- and multilingual extraction (German, English, etc.)
 # MAGIC CREATE TABLE IF NOT EXISTS silver.product_launches (
-# MAGIC   document_id STRING COMMENT 'Source document identifier',
-# MAGIC   client_id STRING COMMENT 'Client who sent the document',
-# MAGIC   article_description STRING COMMENT 'Description of the product/article',
-# MAGIC   launch_date DATE COMMENT 'Planned launch date',
-# MAGIC   identifiers MAP<STRING, STRING> COMMENT 'Product identifiers (SKU, EAN, UPC, etc.)',
-# MAGIC   characteristics MAP<STRING, STRING> COMMENT 'Product characteristics (size, color, material, etc.)',
+# MAGIC   document_id STRING COMMENT 'Unique ID per product-document combination',
+# MAGIC   client_id STRING COMMENT 'Client/brand name (e.g., NIVEA, Henkel)',
+# MAGIC   article_description STRING COMMENT 'Full product name/description',
+# MAGIC   launch_date DATE COMMENT 'Cutover/launch date',
+# MAGIC   identifiers MAP<STRING, STRING> COMMENT 'Identifier change map: identifier_type, identifier_old, identifier_new',
+# MAGIC   characteristics MAP<STRING, STRING> COMMENT 'Product attributes: category, size, packaging',
 # MAGIC   extracted_at TIMESTAMP COMMENT 'When extraction was performed',
 # MAGIC   source_file STRING COMMENT 'Original file path in volume'
 # MAGIC )
-# MAGIC COMMENT 'Standardized product launch data extracted from semi-structured client documents';
+# MAGIC COMMENT 'Standardized product launch data — one row per product, supports identifier transitions and multi-product documents';
 
 # COMMAND ----------
 
