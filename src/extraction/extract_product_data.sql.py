@@ -65,18 +65,15 @@
 # MAGIC SELECT
 # MAGIC   md5(concat(file_path, product:article_description::STRING)) AS document_id,
 # MAGIC   extracted:client_name::STRING AS client_id,
-# MAGIC   product:article_description::STRING AS article_description,
 # MAGIC   TRY_CAST(extracted:launch_date::STRING AS DATE) AS launch_date,
-# MAGIC   MAP(
-# MAGIC     'identifier_type', COALESCE(product:identifier_type::STRING, ''),
-# MAGIC     'identifier_old', COALESCE(product:identifier_old::STRING, ''),
-# MAGIC     'identifier_new', COALESCE(product:identifier_new::STRING, '')
-# MAGIC   ) AS identifiers,
-# MAGIC   MAP(
-# MAGIC     'category', COALESCE(product:category::STRING, ''),
-# MAGIC     'size', COALESCE(product:size::STRING, ''),
-# MAGIC     'packaging', COALESCE(product:packaging::STRING, '')
-# MAGIC   ) AS characteristics,
+# MAGIC   product:article_description::STRING AS article_description,
+# MAGIC   product:identifier_old::STRING AS identifier_old,
+# MAGIC   product:identifier_new::STRING AS identifier_new,
+# MAGIC   product:identifier_type::STRING AS identifier_type,
+# MAGIC   product:size::STRING AS size,
+# MAGIC   product:packaging::STRING AS packaging,
+# MAGIC   product:category::STRING AS category,
+# MAGIC   extracted:notes::STRING AS notes,
 # MAGIC   current_timestamp() AS extracted_at,
 # MAGIC   file_path AS source_file
 # MAGIC FROM extracted_launches
@@ -94,8 +91,12 @@
 # MAGIC   client_id,
 # MAGIC   article_description,
 # MAGIC   launch_date,
-# MAGIC   identifiers,
-# MAGIC   characteristics
+# MAGIC   identifier_old,
+# MAGIC   identifier_new,
+# MAGIC   identifier_type,
+# MAGIC   size,
+# MAGIC   packaging,
+# MAGIC   category
 # MAGIC FROM ${catalog}.silver.product_launches
 # MAGIC ORDER BY extracted_at DESC
 # MAGIC LIMIT 20;

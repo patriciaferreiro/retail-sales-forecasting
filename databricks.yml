@@ -7,7 +7,7 @@ include:
 variables:
   catalog:
     description: Dedicated UC catalog for this project (one per environment)
-    default: product_launches_${bundle.target}
+    default: patricia_aws_serverless_catalog
   warehouse_id:
     description: SQL warehouse ID for AI functions and queries
   notification_email:

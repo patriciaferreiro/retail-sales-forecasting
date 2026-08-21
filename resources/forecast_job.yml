@@ -5,7 +5,7 @@ resources:
       description: "End-to-end pipeline: parse client documents, extract product data, run forecast"
 
       schedule:
-        quartz_cron_expression: "0 0 8 * * ?"  # Daily at 8 AM
+        quartz_cron_expression: "0 0 8 * * ?"
         timezone_id: "Europe/Madrid"
 
       email_notifications:
@@ -15,8 +15,9 @@ resources:
       tasks:
         - task_key: setup_catalog
           notebook_task:
-            notebook_path: ../src/setup_catalog.sql
-            source: WORKSPACE
+            notebook_path: ../src/setup_catalog.sql.py
+            base_parameters:
+              catalog: ${var.catalog}
             warehouse_id: ${var.warehouse_id}
           description: "Create catalog, schemas, and tables if they don't exist"
 
@@ -24,8 +25,9 @@ resources:
           depends_on:
             - task_key: setup_catalog
           notebook_task:
-            notebook_path: ../src/extraction/extract_product_data.sql
-            source: WORKSPACE
+            notebook_path: ../src/extraction/extract_product_data.sql.py
+            base_parameters:
+              catalog: ${var.catalog}
             warehouse_id: ${var.warehouse_id}
           description: "Parse documents and extract standardized product launch data"
 
@@ -33,7 +35,8 @@ resources:
           depends_on:
             - task_key: extract_product_data
           notebook_task:
-            notebook_path: ../src/forecasting/run_forecast.sql
-            source: WORKSPACE
+            notebook_path: ../src/forecasting/run_forecast.sql.py
+            base_parameters:
+              catalog: ${var.catalog}
             warehouse_id: ${var.warehouse_id}
           description: "Generate 12-week launch forecasts per client"
