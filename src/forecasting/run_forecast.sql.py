@@ -8,7 +8,7 @@
 # MAGIC   client_id,
 # MAGIC   DATE_TRUNC('week', launch_date) AS ds,
 # MAGIC   COUNT(*) AS n_launches,
-# MAGIC   COUNT(DISTINCT category) AS n_categories
+# MAGIC   COUNT(DISTINCT characteristics['category']) AS n_categories
 # MAGIC FROM ${catalog}.silver.product_launches
 # MAGIC WHERE launch_date IS NOT NULL
 # MAGIC GROUP BY client_id, DATE_TRUNC('week', launch_date)
@@ -40,6 +40,7 @@
 # MAGIC INSERT INTO ${catalog}.gold.launch_forecasts
 # MAGIC SELECT
 # MAGIC   client_id,
+# MAGIC   ds AS launch_date,
 # MAGIC   ds,
 # MAGIC   n_launches_forecast AS metric_forecast,
 # MAGIC   n_launches_upper AS metric_upper,
