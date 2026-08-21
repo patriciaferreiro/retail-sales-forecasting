@@ -4,8 +4,56 @@ End-to-end Databricks solution that ingests semi-structured product launch docum
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    subgraph Ingestion
+        A[📧 Client Emails] --> B[UC Volume<br/>raw_documents]
+    end
+
+    subgraph Extraction
+        B --> C[ai_parse_document<br/>PDF/DOCX → text]
+        C --> D[ai_extract<br/>multilingual NER]
+        D --> E[EXPLODE<br/>products array]
+    end
+
+    subgraph Storage
+        E --> F[(Silver Table<br/>product_launches)]
+        F --> G[ai_forecast<br/>12-week horizon]
+        G --> H[(Gold Table<br/>launch_forecasts)]
+    end
+
+    subgraph Serving
+        H --> I[📊 AI/BI Dashboard<br/>Client View]
+        F --> I
+    end
+
+    style A fill:#f9f,stroke:#333
+    style I fill:#bbf,stroke:#333
 ```
-Client emails → Volume (raw_documents) → ai_parse_document → ai_extract → Silver table → ai_forecast → Gold table → Dashboard
+
+### Data Flow Detail
+
+```mermaid
+flowchart TD
+    subgraph "Bronze (Raw)"
+        V[/Volumes/.../raw_documents/]
+    end
+
+    subgraph "Silver (Standardized)"
+        V -->|ai_parse_document| P[Parsed Text]
+        P -->|ai_extract| J[JSON struct per doc]
+        J -->|EXPLODE products| S[silver.product_launches<br/>1 row per product]
+    end
+
+    subgraph "Gold (Analytics)"
+        S -->|DATE_TRUNC week + COUNT| TS[Weekly time series]
+        TS -->|ai_forecast| F[gold.launch_forecasts<br/>forecast + confidence bands]
+    end
+
+    subgraph "Presentation"
+        S --> D[Dashboard: KPIs + Table]
+        F --> D[Dashboard: Combo Chart]
+    end
 ```
 
 ## Pipeline Stages
