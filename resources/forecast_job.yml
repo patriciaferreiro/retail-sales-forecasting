@@ -40,3 +40,10 @@ resources:
               catalog: ${var.catalog}
             warehouse_id: ${var.warehouse_id}
           description: "Generate 12-week launch forecasts per client"
+
+        - task_key: sync_forecast_to_lakebase
+          depends_on:
+            - task_key: run_forecast
+          pipeline_task:
+            pipeline_id: ${resources.postgres_synced_tables.forecast_sync.status.pipeline_id}
+          description: "Refresh the Lakebase copy of gold.launch_forecasts used by the app"

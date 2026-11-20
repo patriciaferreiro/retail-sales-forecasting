@@ -1,0 +1,57 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; color: #1b3139; background: #f6f7f9; }
+header { display: flex; align-items: center; gap: 24px; padding: 10px 20px; background: #1b3139; color: #fff; }
+header h1 { font-size: 16px; margin: 0; }
+header nav button { background: none; border: none; color: #c9d3d8; padding: 6px 12px; cursor: pointer; font-size: 13px; border-radius: 4px; }
+header nav button.on { background: #ff3621; color: #fff; }
+header .user { margin-left: auto; color: #c9d3d8; }
+main { padding: 16px 20px; }
+.panel { background: #fff; border: 1px solid #e0e4e8; border-radius: 6px; padding: 12px; }
+.review-layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; align-items: start; }
+.dropzone { border: 2px dashed #b8c2c8; border-radius: 6px; padding: 24px 12px; text-align: center; cursor: pointer; color: #5a6f77; }
+.dropzone.drag, .dropzone:hover { border-color: #ff3621; background: #fff5f3; }
+.uploads h3 { margin: 14px 0 6px; font-size: 13px; }
+.upload-list { list-style: none; margin: 0; padding: 0; max-height: calc(100vh - 290px); overflow: auto; }
+.upload-list li { padding: 8px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
+.upload-list li:hover { background: #f3f5f7; }
+.upload-list li.active { border-color: #ff3621; background: #fff5f3; }
+.upload-list li.empty { color: #8a99a0; cursor: default; }
+.upload-list .row1 { display: flex; justify-content: space-between; gap: 6px; }
+.upload-list .fname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-list .row2, .upload-list .row3 { color: #5a6f77; font-size: 12px; margin-top: 2px; }
+.upload-list .err { color: #b42318; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; background: #e8ecef; white-space: nowrap; }
+.badge.extracting, .badge.uploaded, .badge.run-RUNNING, .badge.run-PENDING, .badge.run-QUEUED { background: #e0ecff; color: #1d4ed8; }
+.badge.extracted, .badge.approved, .badge.run-SUCCESS { background: #dcfce7; color: #166534; }
+.badge.failed, .badge.rejected, .badge.run-FAILED, .badge.run-INTERNAL_ERROR { background: #fee2e2; color: #b42318; }
+.badge.published { background: #1b3139; color: #fff; }
+.badge.pending { background: #fef3c7; color: #92400e; }
+.toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.spacer { flex: 1; }
+button { padding: 6px 12px; border: 1px solid #c3ccd2; background: #fff; border-radius: 4px; cursor: pointer; font-size: 13px; }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: #ff3621; border-color: #ff3621; color: #fff; }
+button.link { border: none; background: none; color: #1d4ed8; padding: 2px 0; font-size: 12px; }
+select { padding: 5px; border: 1px solid #c3ccd2; border-radius: 4px; }
+.table-wrap { overflow: auto; max-height: calc(100vh - 190px); }
+table { border-collapse: collapse; width: max-content; }
+th { position: sticky; top: 0; background: #f3f5f7; text-align: left; padding: 6px; border-bottom: 1px solid #e0e4e8; z-index: 1; }
+td { padding: 3px 4px; border-bottom: 1px solid #eef1f3; vertical-align: top; }
+td input[type=text], td input[type=date] { border: 1px solid transparent; padding: 4px; border-radius: 3px; font-size: 13px; background: transparent; }
+td input:hover:not(:disabled) { border-color: #d5dce1; }
+td input:focus { border-color: #1d4ed8; outline: none; background: #fff; }
+td.error input { background: #fee2e2; }
+td.warning input { background: #fef3c7; }
+td.issues { font-size: 11px; min-width: 200px; }
+td.issues .error { color: #b42318; }
+td.issues .warning { color: #92400e; }
+tr.st-published td, tr.st-rejected td { opacity: .65; }
+.muted { color: #5a6f77; font-size: 12px; }
+.small { margin-top: 6px; }
+.empty-state { color: #5a6f77; padding: 40px; text-align: center; }
+.chart { padding-top: 10px; }
+.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }
+.toast { padding: 10px 14px; border-radius: 6px; color: #fff; background: #1b3139; max-width: 420px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.toast.ok { background: #166534; }
+.toast.warn { background: #b45309; }
+.toast.error { background: #b42318; }

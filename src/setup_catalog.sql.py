@@ -63,4 +63,6 @@
 # MAGIC   metric_lower DOUBLE,
 # MAGIC   forecast_generated_at TIMESTAMP
 # MAGIC )
-# MAGIC COMMENT 'AI-generated forecasts for product launch performance';
+# MAGIC COMMENT 'AI-generated forecasts for product launch performance'
+# MAGIC -- Change data feed lets the app's Lakebase synced table pick up new forecasts
+# MAGIC TBLPROPERTIES (delta.enableChangeDataFeed = true);
