@@ -15,7 +15,9 @@
 # MAGIC     '/Volumes/${catalog}/bronze/raw_documents/',
 # MAGIC     format => 'binaryFile'
 # MAGIC   ) AS f
-# MAGIC   WHERE NOT EXISTS (
+# MAGIC   -- uploads/ is owned by the app: those files are reviewed there before reaching silver
+# MAGIC   WHERE f._metadata.file_path NOT LIKE '%/raw_documents/uploads/%'
+# MAGIC     AND NOT EXISTS (
 # MAGIC     SELECT 1 FROM ${catalog}.silver.product_launches s
 # MAGIC     WHERE s.source_file = f._metadata.file_path
 # MAGIC   )

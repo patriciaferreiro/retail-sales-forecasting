@@ -1,0 +1,54 @@
+# Product Launch Forecast app: React + FastAPI, backed by a Lakebase review queue.
+# See app/SPEC.md.
+resources:
+  postgres_projects:
+    app_db:
+      project_id: ${var.lakebase_project_id}
+      display_name: Product Launch Forecast
+      pg_version: 17
+      default_endpoint_settings:
+        autoscaling_limit_min_cu: 0.5
+        autoscaling_limit_max_cu: 2
+        suspend_timeout_duration: 300s
+
+  # Read-only copy of gold.launch_forecasts in Lakebase so charts load without a warehouse.
+  # Refreshed by the sync_forecast_to_lakebase task after each forecast run.
+  postgres_synced_tables:
+    forecast_sync:
+      synced_table_id: ${var.catalog}.gold.launch_forecasts_synced
+      branch: ${resources.postgres_projects.app_db.name}/branches/production
+      postgres_database: databricks_postgres
+      source_table_full_name: ${var.catalog}.gold.launch_forecasts
+      primary_key_columns:
+        - client_id
+        - ds
+      scheduling_policy: SNAPSHOT
+      create_database_objects_if_missing: true
+      new_pipeline_spec:
+        storage_catalog: ${var.catalog}
+        storage_schema: gold
+
+  apps:
+    product_launch_app:
+      name: product-launch-forecast
+      description: Upload product launch documents, validate extracted products, publish to silver and run the forecast
+      source_code_path: ../app
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+        - name: forecast-job
+          job:
+            id: ${resources.jobs.product_launch_forecast_job.id}
+            permission: CAN_MANAGE_RUN
+        - name: postgres
+          postgres:
+            branch: ${resources.postgres_projects.app_db.name}/branches/production
+            database: ${resources.postgres_projects.app_db.name}/branches/production/databases/databricks-postgres
+            permission: CAN_CONNECT_AND_CREATE
+        - name: raw-documents
+          uc_securable:
+            securable_full_name: ${var.catalog}.bronze.raw_documents
+            securable_type: VOLUME
+            permission: WRITE_VOLUME

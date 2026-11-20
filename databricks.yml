@@ -16,13 +16,21 @@ variables:
   volume_path:
     description: Volume path where client documents are dropped
     default: /Volumes/${var.catalog}/bronze/raw_documents
+  prod_sp_name:
+    description: Service principal application ID the prod job and app run as
+    default: ""
+  lakebase_project_id:
+    description: Lakebase Autoscaling project that backs the app review queue
+    default: product-launch-forecast
 
 targets:
   dev:
     mode: development
     default: true
     workspace:
-      host: https://your-dev-workspace.cloud.databricks.com
+      host: https://fevm-patricia-aws-serverless.cloud.databricks.com
+    variables:
+      warehouse_id: 4471bd9074d14824
 
   prod:
     mode: production
