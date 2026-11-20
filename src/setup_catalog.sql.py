@@ -36,10 +36,15 @@
 # MAGIC CREATE TABLE IF NOT EXISTS silver.product_launches (
 # MAGIC   document_id STRING COMMENT 'Unique ID per product-document combination',
 # MAGIC   client_id STRING COMMENT 'Client/brand name (e.g., NIVEA, Henkel)',
-# MAGIC   article_description STRING COMMENT 'Full product name/description',
 # MAGIC   launch_date DATE COMMENT 'Cutover/launch date',
-# MAGIC   identifiers MAP<STRING, STRING> COMMENT 'Identifier change map: identifier_type, identifier_old, identifier_new',
-# MAGIC   characteristics MAP<STRING, STRING> COMMENT 'Product attributes: category, size, packaging',
+# MAGIC   article_description STRING COMMENT 'Full product name/description',
+# MAGIC   identifier_old STRING COMMENT 'Previous identifier (e.g., old GTIN)',
+# MAGIC   identifier_new STRING COMMENT 'New identifier (e.g., new GTIN)',
+# MAGIC   identifier_type STRING COMMENT 'Identifier type: GTIN, EAN, SKU, UPC',
+# MAGIC   size STRING COMMENT 'Product size (e.g., 150ml)',
+# MAGIC   packaging STRING COMMENT 'Packaging type (e.g., Dose, Tube, Flasche)',
+# MAGIC   category STRING COMMENT 'Product category',
+# MAGIC   notes STRING COMMENT 'Additional extraction notes',
 # MAGIC   extracted_at TIMESTAMP COMMENT 'When extraction was performed',
 # MAGIC   source_file STRING COMMENT 'Original file path in volume'
 # MAGIC )
@@ -52,7 +57,6 @@
 # MAGIC -- Forecast output table
 # MAGIC CREATE TABLE IF NOT EXISTS gold.launch_forecasts (
 # MAGIC   client_id STRING,
-# MAGIC   launch_date DATE,
 # MAGIC   ds DATE COMMENT 'Forecast time point',
 # MAGIC   metric_forecast DOUBLE,
 # MAGIC   metric_upper DOUBLE,
