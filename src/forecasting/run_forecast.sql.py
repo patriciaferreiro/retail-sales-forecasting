@@ -23,12 +23,14 @@
 # MAGIC CREATE OR REPLACE TEMPORARY VIEW forecasted_launches AS
 # MAGIC SELECT * FROM ai_forecast(
 # MAGIC   TABLE(launch_timeseries),
-# MAGIC   horizon => (SELECT MAX(ds) + INTERVAL 12 WEEKS FROM launch_timeseries),
+# MAGIC   -- horizon is right-exclusive: +1 day so the 12th Monday is included
+# MAGIC   horizon => (SELECT MAX(ds) + INTERVAL 12 WEEKS + INTERVAL 1 DAY FROM launch_timeseries),
 # MAGIC   time_col => 'ds',
 # MAGIC   value_col => ARRAY('n_launches', 'n_categories'),
 # MAGIC   group_col => 'client_id',
 # MAGIC   prediction_interval_width => 0.90,
-# MAGIC   frequency => 'W',
+# MAGIC   -- Monday-anchored weeks, matching DATE_TRUNC('week', ...) on the actuals ('W' = weeks ending Sunday)
+# MAGIC   frequency => 'W-MON',
 # MAGIC   parameters => '{"global_floor": 0}'
 # MAGIC );
 
