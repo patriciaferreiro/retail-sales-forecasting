@@ -81,24 +81,29 @@
 # MAGIC MERGE INTO ${catalog}.silver.product_launches AS t
 # MAGIC USING (
 # MAGIC SELECT
-# MAGIC   md5(concat(file_path, product:article_description::STRING)) AS document_id,
-# MAGIC   extracted:client_name::STRING AS client_id,
-# MAGIC   TRY_CAST(extracted:launch_date::STRING AS DATE) AS launch_date,
-# MAGIC   product:article_description::STRING AS article_description,
-# MAGIC   product:identifier_old::STRING AS identifier_old,
-# MAGIC   product:identifier_new::STRING AS identifier_new,
-# MAGIC   product:identifier_type::STRING AS identifier_type,
-# MAGIC   product:size::STRING AS size,
-# MAGIC   product:packaging::STRING AS packaging,
-# MAGIC   product:category::STRING AS category,
-# MAGIC   extracted:notes::STRING AS notes,
-# MAGIC   current_timestamp() AS extracted_at,
-# MAGIC   file_path AS source_file
-# MAGIC FROM extracted_launches
-# MAGIC LATERAL VIEW EXPLODE(
-# MAGIC   TRY_CAST(extracted:products AS ARRAY<VARIANT>)
-# MAGIC ) AS product
-# MAGIC WHERE product:article_description IS NOT NULL
+# MAGIC   md5(concat(source_file, article_description)) AS document_id,
+# MAGIC   client_id, launch_date, article_description, identifier_old, identifier_new,
+# MAGIC   identifier_type, size, packaging, category, notes, extracted_at, source_file
+# MAGIC FROM (
+# MAGIC   -- ai_extract v2.1 returns {response: {field: {value: ...}}, error_message, metadata};
+# MAGIC   -- COALESCE keeps plain values working too
+# MAGIC   SELECT
+# MAGIC     COALESCE(x:client_name:value::STRING, x:client_name::STRING) AS client_id,
+# MAGIC     TRY_CAST(COALESCE(x:launch_date:value::STRING, x:launch_date::STRING) AS DATE) AS launch_date,
+# MAGIC     COALESCE(product:article_description:value::STRING, product:article_description::STRING) AS article_description,
+# MAGIC     COALESCE(product:identifier_old:value::STRING, product:identifier_old::STRING) AS identifier_old,
+# MAGIC     COALESCE(product:identifier_new:value::STRING, product:identifier_new::STRING) AS identifier_new,
+# MAGIC     COALESCE(product:identifier_type:value::STRING, product:identifier_type::STRING) AS identifier_type,
+# MAGIC     COALESCE(product:size:value::STRING, product:size::STRING) AS size,
+# MAGIC     COALESCE(product:packaging:value::STRING, product:packaging::STRING) AS packaging,
+# MAGIC     COALESCE(product:category:value::STRING, product:category::STRING) AS category,
+# MAGIC     COALESCE(x:notes:value::STRING, x:notes::STRING) AS notes,
+# MAGIC     current_timestamp() AS extracted_at,
+# MAGIC     file_path AS source_file
+# MAGIC   FROM (SELECT file_path, COALESCE(extracted:response, extracted) AS x FROM extracted_launches)
+# MAGIC   LATERAL VIEW EXPLODE(TRY_CAST(x:products AS ARRAY<VARIANT>)) AS product
+# MAGIC ) AS p
+# MAGIC WHERE article_description IS NOT NULL
 # MAGIC -- A document can list the same product twice; keep one row per document_id
 # MAGIC QUALIFY ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY extracted_at DESC) = 1
 # MAGIC ) AS s
