@@ -1,19 +1,35 @@
 # Databricks notebook source
-# DBTITLE 1,Parse all documents from the raw volume
+# DBTITLE 1,Parse new documents from the raw volume
 # MAGIC %sql
-# MAGIC -- Step 1: Parse all documents dropped into the raw_documents volume
+# MAGIC -- Step 1: Parse documents dropped into the raw_documents volume
 # MAGIC -- Handles PDFs, Word docs, images — any format clients send
+# MAGIC -- Only files not yet in silver are parsed, and ai_parse_document runs once per file
 # MAGIC CREATE OR REPLACE TEMPORARY VIEW parsed_documents AS
-# MAGIC SELECT
-# MAGIC   _metadata.file_name AS file_name,
-# MAGIC   _metadata.file_path AS file_path,
-# MAGIC   _metadata.file_modification_time AS received_at,
-# MAGIC   ai_parse_document(content, MAP('version', '2.0')) AS parsed
-# MAGIC FROM READ_FILES(
-# MAGIC   '/Volumes/${catalog}/bronze/raw_documents/',
-# MAGIC   format => 'binaryFile'
+# MAGIC WITH new_files AS (
+# MAGIC   SELECT
+# MAGIC     f._metadata.file_name AS file_name,
+# MAGIC     f._metadata.file_path AS file_path,
+# MAGIC     f._metadata.file_modification_time AS received_at,
+# MAGIC     f.content
+# MAGIC   FROM READ_FILES(
+# MAGIC     '/Volumes/${catalog}/bronze/raw_documents/',
+# MAGIC     format => 'binaryFile'
+# MAGIC   ) AS f
+# MAGIC   WHERE NOT EXISTS (
+# MAGIC     SELECT 1 FROM ${catalog}.silver.product_launches s
+# MAGIC     WHERE s.source_file = f._metadata.file_path
+# MAGIC   )
+# MAGIC ),
+# MAGIC parsed_files AS (
+# MAGIC   SELECT
+# MAGIC     file_name,
+# MAGIC     file_path,
+# MAGIC     received_at,
+# MAGIC     ai_parse_document(content, MAP('version', '2.0')) AS parsed
+# MAGIC   FROM new_files
 # MAGIC )
-# MAGIC WHERE is_variant_null(ai_parse_document(content, MAP('version', '2.0')):error_status);
+# MAGIC SELECT * FROM parsed_files
+# MAGIC WHERE is_variant_null(parsed:error_status);
 
 # COMMAND ----------
 
@@ -58,10 +74,12 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,Write standardized data to silver table (one row per product)
+# DBTITLE 1,Merge standardized data into silver table (one row per product)
 # MAGIC %sql
-# MAGIC -- Step 3: Explode products array into one row per product, insert into silver
-# MAGIC INSERT INTO ${catalog}.silver.product_launches
+# MAGIC -- Step 3: Explode products array into one row per product, merge into silver
+# MAGIC -- MERGE on document_id keeps reruns idempotent (no duplicate rows)
+# MAGIC MERGE INTO ${catalog}.silver.product_launches AS t
+# MAGIC USING (
 # MAGIC SELECT
 # MAGIC   md5(concat(file_path, product:article_description::STRING)) AS document_id,
 # MAGIC   extracted:client_name::STRING AS client_id,
@@ -80,7 +98,13 @@
 # MAGIC LATERAL VIEW EXPLODE(
 # MAGIC   TRY_CAST(extracted:products AS ARRAY<VARIANT>)
 # MAGIC ) AS product
-# MAGIC WHERE product:article_description IS NOT NULL;
+# MAGIC WHERE product:article_description IS NOT NULL
+# MAGIC -- A document can list the same product twice; keep one row per document_id
+# MAGIC QUALIFY ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY extracted_at DESC) = 1
+# MAGIC ) AS s
+# MAGIC ON t.document_id = s.document_id
+# MAGIC WHEN MATCHED THEN UPDATE SET *
+# MAGIC WHEN NOT MATCHED THEN INSERT *;
 
 # COMMAND ----------
 
