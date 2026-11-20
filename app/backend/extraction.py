@@ -37,8 +37,11 @@ _SAFE_PATH = re.compile(r"^/Volumes/[A-Za-z0-9_\-]+/[A-Za-z0-9_\-]+/[A-Za-z0-9_\
 
 
 def _field(obj: str, name: str) -> str:
-    """ai_extract v2.1 returns each field as {"value": ...}; accept plain values too."""
-    return f"COALESCE({obj}:{name}:value::STRING, {obj}:{name}::STRING)"
+    """ai_extract v2.1 returns each field as {"value": ...} (value may be null); accept plain values too."""
+    return (
+        f"CASE WHEN schema_of_variant({obj}:{name}) LIKE 'OBJECT%' "
+        f"THEN {obj}:{name}:value::STRING ELSE {obj}:{name}::STRING END"
+    )
 
 
 def _sql_str(s: str) -> str:
