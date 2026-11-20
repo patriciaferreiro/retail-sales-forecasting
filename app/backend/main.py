@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from . import config
 from .db import S, cursor, init_db, w
 from .extraction import extract_file, parse_text
+from .suggestions import ask_model
 from .validation import has_errors, normalize_identifier, parse_date, validate
 from .warehouse import SqlError, run_sql
 
@@ -484,6 +485,164 @@ def product_detail(product_id: uuid.UUID):
     }
 
 
+# --------------------------------------------------------------------------- API: AI suggestions
+
+class SuggestRequest(BaseModel):
+    field: str | None = None  # one field, or all fields with errors
+
+
+@app.post("/api/products/{product_id}/suggest")
+def suggest_fixes(product_id: uuid.UUID, body: SuggestRequest, request: Request):
+    """Ask the model for fixes; every suggestion is re-validated and stored, never applied automatically."""
+    user = current_user(request)
+    keys = published_keys()
+    with cursor() as cur:
+        cur.execute(f"SELECT * FROM {S}.review_products WHERE product_id=%s", (product_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Product not found")
+        if row["status"] == "published":
+            raise HTTPException(409, "Published products cannot be changed")
+        row = _with_validation(cur, row, keys)
+        cur.execute(
+            f"""SELECT article_description, identifier_old, identifier_new, identifier_type, size, packaging, category
+                FROM {S}.review_products WHERE upload_id=%s AND product_id<>%s
+                ORDER BY article_description NULLS LAST""",
+            (row["upload_id"], product_id),
+        )
+        siblings = cur.fetchall()
+        cur.execute(
+            f"""SELECT DISTINCT ON (field) field, old_value FROM {S}.review_audit
+                WHERE product_id=%s AND field <> 'status' ORDER BY field, changed_at, audit_id""",
+            (product_id,),
+        )
+        extracted = {a["field"]: a["old_value"] for a in cur.fetchall()}  # values before human edits
+
+    issues = row["validation_errors"]
+    if body.field:
+        if body.field not in EDITABLE_FIELDS:
+            raise HTTPException(400, f"Field not editable: {body.field}")
+        fields = [body.field]
+    else:
+        err = {i["field"] for i in issues if i["severity"] == "error"}
+        fields = [f for f in EDITABLE_FIELDS if f in err]
+    if not fields:
+        raise HTTPException(400, "This product has no errors to fix")
+
+    doc_text = get_parsed_text(row["upload_id"])
+    product = {f: _as_text(row.get(f)) for f in EDITABLE_FIELDS}
+    try:
+        result = ask_model(doc_text, product, fields, issues, siblings, extracted)
+    except Exception as exc:
+        log.exception("AI suggestion failed for %s", product_id)
+        raise HTTPException(502, f"AI suggestion failed: {exc}")
+
+    doc_norm = _norm(doc_text) if doc_text else None
+    stored = []
+    with cursor() as cur:
+        # A fresh suggestion replaces any open one for the same field
+        cur.execute(
+            f"""UPDATE {S}.ai_suggestions SET status='superseded'
+                WHERE product_id=%s AND status='suggested' AND field = ANY(%s)""",
+            (product_id, fields),
+        )
+        for s in result["suggestions"]:
+            f, action, value = s["field"], s["action"], s["suggested_value"]
+            if action == "change" and f in ("identifier_old", "identifier_new"):
+                value = normalize_identifier(value)
+            if action == "change" and f == "launch_date":
+                d = parse_date(value)
+                value = d.isoformat() if d else value
+            still_invalid, messages = None, []
+            if action in ("change", "clear"):
+                new_val = None if action == "clear" else (parse_date(value) if f == "launch_date" else value)
+                merged = {**row, f: new_val}
+                if f == "launch_date":
+                    merged["launch_date_raw"] = value if new_val is None and action == "change" else None
+                checked = validate(merged, published_keys=keys, duplicate_in_review=_dup_in_review(cur, merged))
+                messages = [i for i in checked if i["field"] == f]
+                still_invalid = any(i["severity"] == "error" for i in messages)
+            quote = s["evidence_quote"].strip()
+            # Every cited line (or '...'-separated passage) must occur in the document text
+            parts = [p for p in re.split(r"\n|\.\.\.|\u2026", quote) if _norm(p)]
+            evidence_found = bool(parts) and doc_norm is not None and all(_norm(p) in doc_norm for p in parts)
+            rec = {
+                "suggestion_id": uuid.uuid4(), "product_id": product_id, "field": f, "action": action,
+                "current_value": product.get(f), "suggested_value": value, "confidence": s["confidence"],
+                "reason": s["reason"], "evidence_quote": quote or None, "evidence_found": evidence_found,
+                "value_in_document": found_in_document(f, value, doc_norm) if value else None,
+                "still_invalid": still_invalid, "validation_messages": messages,
+                "product_note": result["product_note"] or None, "model": result["model"],
+                "based_on_version": row["version"], "status": "suggested", "created_by": user,
+            }
+            cur.execute(
+                f"""INSERT INTO {S}.ai_suggestions
+                    (suggestion_id, product_id, field, action, current_value, suggested_value, confidence, reason,
+                     evidence_quote, evidence_found, value_in_document, still_invalid, validation_messages,
+                     product_note, model, based_on_version, status, created_by)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (*[rec[k] for k in ("suggestion_id", "product_id", "field", "action", "current_value",
+                                    "suggested_value", "confidence", "reason", "evidence_quote", "evidence_found",
+                                    "value_in_document", "still_invalid")],
+                 Jsonb(messages), rec["product_note"], rec["model"], rec["based_on_version"], "suggested", user),
+            )
+            stored.append(rec)
+    return {"product_id": product_id, "version": row["version"], "fields": fields,
+            "suggestions": stored, "product_note": result["product_note"], "model": result["model"]}
+
+
+@app.get("/api/products/{product_id}/suggestions")
+def open_suggestions(product_id: uuid.UUID):
+    with cursor() as cur:
+        cur.execute(
+            f"SELECT * FROM {S}.ai_suggestions WHERE product_id=%s AND status='suggested' ORDER BY created_at",
+            (product_id,),
+        )
+        return {"suggestions": cur.fetchall()}
+
+
+class ApplyRequest(BaseModel):
+    version: int  # product version the reviewer is looking at
+
+
+@app.post("/api/suggestions/{suggestion_id}/apply")
+def apply_suggestion(suggestion_id: uuid.UUID, body: ApplyRequest, request: Request):
+    user = current_user(request)
+    with cursor() as cur:
+        cur.execute(f"SELECT * FROM {S}.ai_suggestions WHERE suggestion_id=%s", (suggestion_id,))
+        s = cur.fetchone()
+    if not s:
+        raise HTTPException(404, "Suggestion not found")
+    if s["status"] != "suggested":
+        raise HTTPException(409, f"Suggestion already {s['status']}")
+    if s["action"] == "no_change":
+        raise HTTPException(400, "This suggestion proposes no change; dismiss it instead")
+    value = s["suggested_value"] if s["action"] == "change" else None
+    updated = apply_product_changes(
+        s["product_id"], ProductPatch(version=body.version, changes={s["field"]: value}), f"{user} (AI suggestion)"
+    )
+    with cursor() as cur:
+        cur.execute(
+            f"""UPDATE {S}.ai_suggestions SET status='applied', decided_by=%s, decided_at=now()
+                WHERE suggestion_id=%s AND status='suggested'""",
+            (user, suggestion_id),
+        )
+    return {"suggestion_id": suggestion_id, "product": updated}
+
+
+@app.post("/api/suggestions/{suggestion_id}/dismiss")
+def dismiss_suggestion(suggestion_id: uuid.UUID, request: Request):
+    with cursor() as cur:
+        cur.execute(
+            f"""UPDATE {S}.ai_suggestions SET status='dismissed', decided_by=%s, decided_at=now()
+                WHERE suggestion_id=%s AND status='suggested' RETURNING suggestion_id""",
+            (current_user(request), suggestion_id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(409, "Suggestion not found or already decided")
+    return {"suggestion_id": suggestion_id, "status": "dismissed"}
+
+
 # --------------------------------------------------------------------------- API: review edits
 
 class ProductPatch(BaseModel):
@@ -493,7 +652,11 @@ class ProductPatch(BaseModel):
 
 @app.patch("/api/products/{product_id}")
 def patch_product(product_id: uuid.UUID, body: ProductPatch, request: Request):
-    user = current_user(request)
+    return apply_product_changes(product_id, body, current_user(request))
+
+
+def apply_product_changes(product_id: uuid.UUID, body: ProductPatch, user: str):
+    """Version-checked edit with audit trail; shared by manual edits and applied AI suggestions."""
     unknown = set(body.changes) - set(EDITABLE_FIELDS)
     if unknown:
         raise HTTPException(400, f"Fields not editable: {sorted(unknown)}")

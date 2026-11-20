@@ -13,6 +13,8 @@ env:
     valueFrom: forecast-job
   - name: LAKEBASE_ENDPOINT
     valueFrom: postgres
+  - name: SERVING_ENDPOINT
+    valueFrom: llm
   - name: CATALOG
     value: patricia_aws_serverless_catalog
   - name: APP_DB_SCHEMA

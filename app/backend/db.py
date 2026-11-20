@@ -128,6 +128,32 @@ CREATE TABLE IF NOT EXISTS {S}.review_audit (
 );
 CREATE INDEX IF NOT EXISTS review_audit_product_idx ON {S}.review_audit(product_id);
 
+-- AI fix suggestions and the reviewer's decision (applied / dismissed)
+CREATE TABLE IF NOT EXISTS {S}.ai_suggestions (
+  suggestion_id       UUID PRIMARY KEY,
+  product_id          UUID NOT NULL REFERENCES {S}.review_products(product_id) ON DELETE CASCADE,
+  field               TEXT NOT NULL,
+  action              TEXT NOT NULL,          -- change | clear | no_change
+  current_value       TEXT,
+  suggested_value     TEXT,
+  confidence          TEXT,
+  reason              TEXT,
+  evidence_quote      TEXT,
+  evidence_found      BOOLEAN,                -- quote occurs in the document text
+  value_in_document   BOOLEAN,                -- suggested value occurs in the document text
+  still_invalid       BOOLEAN,                -- suggested value would still fail validation
+  validation_messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+  product_note        TEXT,
+  model               TEXT,
+  based_on_version    INT,
+  status              TEXT NOT NULL DEFAULT 'suggested',  -- suggested | applied | dismissed | superseded
+  created_by          TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_by          TEXT,
+  decided_at          TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS ai_suggestions_product_idx ON {S}.ai_suggestions(product_id, status);
+
 CREATE TABLE IF NOT EXISTS {S}.forecast_runs (
   run_id        BIGINT PRIMARY KEY,
   triggered_by  TEXT,
