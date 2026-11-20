@@ -37,7 +37,8 @@
 # DBTITLE 1,Write forecast results to gold table
 # MAGIC %sql
 # MAGIC -- Persist forecast to gold layer for sharing
-# MAGIC INSERT INTO ${catalog}.gold.launch_forecasts
+# MAGIC -- Each run forecasts every client, so the latest run replaces the previous one
+# MAGIC INSERT OVERWRITE ${catalog}.gold.launch_forecasts
 # MAGIC SELECT
 # MAGIC   client_id,
 # MAGIC   ds AS launch_date,
