@@ -147,11 +147,196 @@ function Cell({ row, col, issues, onSave, setEditing }) {
   );
 }
 
+// ------------------------------------------------------------------ product detail panel
+const LABELS = Object.fromEntries(COLUMNS.map((c) => [c.key, c.label]));
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Regex matching a value with any spacing/punctuation between its characters (e.g. "200ml" ~ "200 ml")
+function looseRegex(value) {
+  const chars = String(value).replace(/[\s\-_.,;:/|]+/g, "").split("");
+  if (!chars.length) return null;
+  return new RegExp(chars.map(escapeRe).join("[\\s\\-_.,;:/|]*"), "gi");
+}
+
+function dateVariants(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  return m ? [iso, `${m[3]}.${m[2]}.${m[1]}`, `${m[3]}/${m[2]}/${m[1]}`] : [iso];
+}
+
+function HighlightedText({ text, terms }) {
+  const ref = useRef(null);
+  const parts = useMemo(() => {
+    const regs = terms.filter(Boolean).map(looseRegex).filter(Boolean);
+    if (!regs.length) return [text];
+    const big = new RegExp(regs.map((r) => r.source).join("|"), "gi");
+    const out = []; let last = 0; let m;
+    while ((m = big.exec(text)) !== null) {
+      if (m[0] === "") { big.lastIndex++; continue; }
+      out.push(text.slice(last, m.index), <mark key={m.index}>{m[0]}</mark>);
+      last = m.index + m[0].length;
+    }
+    out.push(text.slice(last));
+    return out;
+  }, [text, terms]);
+  useEffect(() => { ref.current?.querySelector("mark")?.scrollIntoView({ block: "center" }); }, [parts]);
+  return <pre ref={ref} className="doc-text">{parts}</pre>;
+}
+
+function FieldRow({ f, version, onSave, selected, onSelect, extra }) {
+  const [value, setValue] = useState(f.current ?? "");
+  const focused = useRef(false);
+  useEffect(() => { if (!focused.current) setValue(f.current ?? ""); }, [f.current, version]);
+  const commit = () => {
+    focused.current = false;
+    if (String(value) !== String(f.current ?? "")) onSave({ [f.field]: value });
+  };
+  const found = f.found_in_document;
+  return (
+    <tr className={`chk-${f.status} ${selected ? "sel" : ""}`} onClick={() => onSelect(f)}>
+      <td className="fname-cell">{LABELS[f.field] || f.field}</td>
+      <td className={f.extracted == null ? "missing" : ""}>{f.extracted ?? "(not found)"}</td>
+      <td>
+        <input
+          type={f.field === "launch_date" ? "date" : "text"}
+          value={value ?? ""}
+          onFocus={() => { focused.current = true; onSelect(f); }}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          className={f.edited ? "edited" : ""}
+        />
+      </td>
+      <td>
+        {found === true && <span className="found yes" title="Value occurs in the document text">in doc</span>}
+        {found === false && <span className="found no" title="Value not found in the document text">not in doc</span>}
+      </td>
+      <td>
+        {f.status === "ok" ? <span className="ok">ok</span>
+          : f.issues.map((i, n) => <div key={n} className={i.severity}>{i.message}</div>)}
+        {extra}
+      </td>
+    </tr>
+  );
+}
+
+function ProductPanel({ productId, onClose, onNavigate, onChanged, notify, renderFieldExtra, header }) {
+  const [d, setD] = useState(null);
+  const [text, setText] = useState(null);
+  const [view, setView] = useState("preview");
+  const [sel, setSel] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setD(await api.detail(productId)); } catch (e) { notify(e.message, "error"); }
+  }, [productId, notify]);
+  useEffect(() => { setD(null); setSel(null); load(); }, [productId]); // eslint-disable-line
+  useEffect(() => {
+    if (!d) return;
+    api.text(d.product.upload_id).then((r) => setText(r.text)).catch(() => setText(null));
+  }, [d?.product.upload_id]); // eslint-disable-line
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.tagName === "INPUT") return;
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowDown" && d?.next_id) onNavigate(d.next_id);
+      if (e.key === "ArrowUp" && d?.prev_id) onNavigate(d.prev_id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [d, onClose, onNavigate]);
+
+  async function save(changes) {
+    try {
+      await api.patch(productId, d.product.version, changes);
+      await load(); onChanged?.();
+    } catch (e) {
+      if (e.status === 409) { notify(`${e.detail?.message || "Changed by someone else"}. Reloaded.`, "warn"); await load(); }
+      else notify(`Save failed: ${e.message}`, "error");
+    }
+  }
+  async function setStatus(status) {
+    setBusy(true);
+    try {
+      const r = await api.setStatus(status, [{ product_id: productId, version: d.product.version }]);
+      if (r.blocked.length) notify("Fix the errors before approving", "warn");
+      else if (r.conflicts.length) notify("Changed by someone else. Reloaded.", "warn");
+      else notify(`Product ${status}`, "ok");
+      await load(); onChanged?.();
+    } catch (e) { notify(e.message, "error"); } finally { setBusy(false); }
+  }
+
+  const terms = useMemo(() => (
+    sel ? (sel.field === "launch_date" ? dateVariants(sel.current).concat(sel.extracted) : [sel.current, sel.extracted]) : []
+  ), [sel?.field, sel?.current, sel?.extracted]); // eslint-disable-line
+  const select = (f) => { setSel(f); if (text) setView("text"); };
+  const errors = d ? d.fields.filter((f) => f.status === "error").length : 0;
+  const notFound = d ? d.fields.filter((f) => f.found_in_document === false).length : 0;
+
+  return (
+    <div className="panel-overlay" onClick={onClose}>
+      <div className="side-panel" onClick={(e) => e.stopPropagation()}>
+        {!d ? <div className="empty-state">Loading…</div> : (
+          <>
+            <div className="sp-head">
+              <div>
+                <div className="sp-title">{d.product.article_description || "(no description)"}</div>
+                <div className="muted">
+                  <span className={`badge ${d.product.status}`}>{d.product.status}</span>{" "}
+                  {d.upload.file_name} · product {d.position} of {d.total} · last edit {d.product.updated_by}
+                </div>
+              </div>
+              <span className="spacer" />
+              {header?.(d, load)}
+              <button disabled={!d.prev_id} onClick={() => onNavigate(d.prev_id)} title="Previous (↑)">← Prev</button>
+              <button disabled={!d.next_id} onClick={() => onNavigate(d.next_id)} title="Next (↓)">Next →</button>
+              <button disabled={busy || d.product.status === "published"} onClick={() => setStatus("rejected")}>Reject</button>
+              <button className="primary" disabled={busy || errors > 0 || ["published", "approved"].includes(d.product.status)}
+                      title={errors ? "Fix the errors first" : ""} onClick={() => setStatus("approved")}>Approve</button>
+              <button onClick={onClose} title="Close (Esc)">✕</button>
+            </div>
+            <div className="sp-body">
+              <div className="sp-doc">
+                <div className="sp-tabs">
+                  <button className={view === "preview" ? "on" : ""} onClick={() => setView("preview")}>Preview</button>
+                  <button className={view === "text" ? "on" : ""} disabled={!text} onClick={() => setView("text")}>Document text</button>
+                  {sel && <span className="muted">highlighting {LABELS[sel.field]}</span>}
+                </div>
+                <div className="sp-doc-body">
+                  {view === "text" && text ? <HighlightedText text={text} terms={terms} />
+                    : d.upload.preview === "pdf" ? <iframe className="doc-frame" title="document" src={api.fileUrl(d.product.upload_id)} />
+                    : d.upload.preview === "image" ? <div className="doc-image"><img src={api.fileUrl(d.product.upload_id)} alt="document" /></div>
+                    : <div className="empty-state"><a href={api.fileUrl(d.product.upload_id)} download>Download {d.upload.file_name}</a></div>}
+                </div>
+              </div>
+              <div className="sp-fields">
+                <div className="muted sp-summary">
+                  {errors} error(s) · {notFound} value(s) not found in the document · click a field to highlight it in the text
+                </div>
+                <table className="field-table">
+                  <thead><tr><th>Field</th><th>Extracted</th><th>Current</th><th>Source</th><th>Check</th></tr></thead>
+                  <tbody>
+                    {d.fields.map((f) => (
+                      <FieldRow key={f.field} f={f} version={d.product.version} onSave={save}
+                                selected={sel?.field === f.field} onSelect={select}
+                                extra={renderFieldExtra?.(d, f, load, setSel)} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReviewGrid({ uploadId, notify }) {
   const [rows, setRows] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(false);
+  const [openId, setOpenId] = useState(null);
   const editing = useRef(false);
   const setEditing = (v) => { editing.current = v; };
 
@@ -249,11 +434,14 @@ function ReviewGrid({ uploadId, notify }) {
                 return (
                   <tr key={r.product_id} className={`st-${r.status}`}>
                     <td><input type="checkbox" disabled={r.status === "published"} checked={selected.has(r.product_id)} onChange={() => toggle(r.product_id)} /></td>
-                    <td><span className={`badge ${r.status}`}>{r.status}</span></td>
+                    <td>
+                      <button className="link" title="Open product details" onClick={() => setOpenId(r.product_id)}>Details</button>{" "}
+                      <span className={`badge ${r.status}`}>{r.status}</span>
+                    </td>
                     {COLUMNS.map((c) => (
                       <Cell key={c.key} row={r} col={c} issues={issues} onSave={save} setEditing={setEditing} />
                     ))}
-                    <td className="issues">
+                    <td className="issues clickable" title="Open product details" onClick={() => setOpenId(r.product_id)}>
                       {issues.map((i, n) => <div key={n} className={i.severity}>{i.message}</div>)}
                     </td>
                     <td className="muted">{r.updated_by}<br />{fmtTime(r.updated_at)}</td>
@@ -263,6 +451,15 @@ function ReviewGrid({ uploadId, notify }) {
             </tbody>
           </table>
         </div>
+      )}
+      {openId && (
+        <ProductPanel
+          productId={openId}
+          onClose={() => setOpenId(null)}
+          onNavigate={setOpenId}
+          onChanged={() => load(true)}
+          notify={notify}
+        />
       )}
     </div>
   );

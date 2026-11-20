@@ -75,7 +75,30 @@ tr.st-published td, tr.st-rejected td { opacity: .65; }
 .field-table .ok { color: #166534; }
 .field-table .error { color: #b42318; }
 .field-table .warning { color: #92400e; }
-.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }
+/* product detail side panel */
+td.clickable { cursor: pointer; }
+.panel-overlay { position: fixed; inset: 0; background: rgba(27,49,57,.35); z-index: 20; display: flex; justify-content: flex-end; }
+.side-panel { width: min(1400px, 92vw); height: 100vh; background: #fff; box-shadow: -4px 0 16px rgba(0,0,0,.2); display: flex; flex-direction: column; }
+.sp-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #e0e4e8; }
+.sp-title { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+.sp-body { flex: 1; display: grid; grid-template-columns: 1fr 1.1fr; min-height: 0; }
+.sp-doc { display: flex; flex-direction: column; border-right: 1px solid #e0e4e8; min-height: 0; }
+.sp-tabs { display: flex; gap: 6px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #eef1f3; }
+.sp-tabs button.on { background: #1b3139; color: #fff; border-color: #1b3139; }
+.sp-doc-body { flex: 1; min-height: 0; overflow: auto; background: #fafbfc; }
+.doc-text { margin: 0; padding: 12px 14px; white-space: pre-wrap; font-size: 12px; line-height: 1.6; }
+.doc-text mark { background: #fde68a; padding: 0 1px; border-radius: 2px; }
+.sp-fields { overflow: auto; padding: 10px 14px; }
+.sp-summary { margin-bottom: 8px; }
+.sp-fields .field-table tr { cursor: pointer; }
+.sp-fields .field-table tr.sel td { box-shadow: inset 0 0 0 9999px rgba(29,78,216,.06); }
+.sp-fields .field-table td { vertical-align: top; }
+.sp-fields .field-table input { width: 100%; min-width: 120px; border: 1px solid #d5dce1; border-radius: 3px; padding: 3px 5px; font-size: 12px; }
+.sp-fields .field-table input.edited { border-color: #1d4ed8; color: #1d4ed8; }
+.found { font-size: 11px; padding: 1px 6px; border-radius: 8px; white-space: nowrap; }
+.found.yes { background: #dcfce7; color: #166534; }
+.found.no { background: #fee2e2; color: #b42318; }
+.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 30; }
 .toast { padding: 10px 14px; border-radius: 6px; color: #fff; background: #1b3139; max-width: 420px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 .toast.ok { background: #166534; }
 .toast.warn { background: #b45309; }
