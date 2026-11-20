@@ -50,6 +50,31 @@ tr.st-published td, tr.st-rejected td { opacity: .65; }
 .small { margin-top: 6px; }
 .empty-state { color: #5a6f77; padding: 40px; text-align: center; }
 .chart { padding-top: 10px; }
+/* ingestion check */
+.ingest-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 8px 4px 12px; border-bottom: 1px solid #eef1f3; margin-bottom: 12px; }
+.ingest-summary .stat { background: #f3f5f7; border-radius: 4px; padding: 3px 8px; }
+.ingest-summary .stat.bad { background: #fee2e2; color: #b42318; }
+.ingest-summary .stat.warn { background: #fef3c7; color: #92400e; }
+.ingest-summary .full { flex-basis: 100%; }
+.ingest-split { display: grid; grid-template-columns: minmax(380px, 1fr) minmax(420px, 1fr); gap: 16px; height: calc(100vh - 230px); }
+.ingest-doc { border: 1px solid #e0e4e8; border-radius: 4px; overflow: hidden; background: #fafbfc; }
+.doc-frame { width: 100%; height: 100%; border: 0; }
+.doc-image { height: 100%; overflow: auto; }
+.doc-image img { max-width: 100%; display: block; margin: 0 auto; }
+.ingest-fields { overflow: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
+.field-card { border: 1px solid #e0e4e8; border-radius: 6px; padding: 8px 10px; }
+.field-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.field-table { width: 100%; border-collapse: collapse; }
+.field-table th { position: static; font-weight: 600; font-size: 12px; }
+.field-table td { padding: 4px 6px; font-size: 12px; }
+.field-table .fname-cell { color: #5a6f77; white-space: nowrap; width: 110px; }
+.field-table td.missing { color: #b42318; font-style: italic; }
+.field-table td.edited { color: #1d4ed8; font-weight: 600; }
+.field-table tr.chk-error td { background: #fff5f5; }
+.field-table tr.chk-warning td { background: #fffbeb; }
+.field-table .ok { color: #166534; }
+.field-table .error { color: #b42318; }
+.field-table .warning { color: #92400e; }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }
 .toast { padding: 10px 14px; border-radius: 6px; color: #fff; background: #1b3139; max-width: 420px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 .toast.ok { background: #166534; }

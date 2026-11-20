@@ -33,6 +33,8 @@ export const api = {
   },
   retry: (id) => request("POST", `/api/uploads/${id}/retry`),
   products: (uploadId) => request("GET", `/api/uploads/${uploadId}/products`),
+  fields: (uploadId) => request("GET", `/api/uploads/${uploadId}/fields`),
+  fileUrl: (uploadId) => `/api/uploads/${uploadId}/file`,
   patch: (id, version, changes) => request("PATCH", `/api/products/${id}`, { version, changes }),
   setStatus: (status, items) => request("POST", "/api/products/status", { status, items }),
   audit: (id) => request("GET", `/api/products/${id}/audit`),
