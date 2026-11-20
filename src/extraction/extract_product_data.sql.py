@@ -83,24 +83,29 @@
 # MAGIC MERGE INTO ${catalog}.silver.product_launches AS t
 # MAGIC USING (
 # MAGIC SELECT
-# MAGIC   md5(concat(file_path, product:article_description::STRING)) AS document_id,
-# MAGIC   extracted:client_name::STRING AS client_id,
-# MAGIC   TRY_CAST(extracted:launch_date::STRING AS DATE) AS launch_date,
-# MAGIC   product:article_description::STRING AS article_description,
-# MAGIC   product:identifier_old::STRING AS identifier_old,
-# MAGIC   product:identifier_new::STRING AS identifier_new,
-# MAGIC   product:identifier_type::STRING AS identifier_type,
-# MAGIC   product:size::STRING AS size,
-# MAGIC   product:packaging::STRING AS packaging,
-# MAGIC   product:category::STRING AS category,
-# MAGIC   extracted:notes::STRING AS notes,
-# MAGIC   current_timestamp() AS extracted_at,
-# MAGIC   file_path AS source_file
-# MAGIC FROM extracted_launches
-# MAGIC LATERAL VIEW EXPLODE(
-# MAGIC   TRY_CAST(extracted:products AS ARRAY<VARIANT>)
-# MAGIC ) AS product
-# MAGIC WHERE product:article_description IS NOT NULL
+# MAGIC   md5(concat(source_file, article_description)) AS document_id,
+# MAGIC   client_id, launch_date, article_description, identifier_old, identifier_new,
+# MAGIC   identifier_type, size, packaging, category, notes, extracted_at, source_file
+# MAGIC FROM (
+# MAGIC   -- ai_extract v2.1 returns {response: {field: {value: ...}}, error_message, metadata}.
+# MAGIC   -- Unwrap .value whenever the field is an object (value may be null); plain values pass through.
+# MAGIC   SELECT
+# MAGIC     CASE WHEN schema_of_variant(x:client_name) LIKE 'OBJECT%' THEN x:client_name:value::STRING ELSE x:client_name::STRING END AS client_id,
+# MAGIC     TRY_CAST(CASE WHEN schema_of_variant(x:launch_date) LIKE 'OBJECT%' THEN x:launch_date:value::STRING ELSE x:launch_date::STRING END AS DATE) AS launch_date,
+# MAGIC     CASE WHEN schema_of_variant(product:article_description) LIKE 'OBJECT%' THEN product:article_description:value::STRING ELSE product:article_description::STRING END AS article_description,
+# MAGIC     CASE WHEN schema_of_variant(product:identifier_old) LIKE 'OBJECT%' THEN product:identifier_old:value::STRING ELSE product:identifier_old::STRING END AS identifier_old,
+# MAGIC     CASE WHEN schema_of_variant(product:identifier_new) LIKE 'OBJECT%' THEN product:identifier_new:value::STRING ELSE product:identifier_new::STRING END AS identifier_new,
+# MAGIC     CASE WHEN schema_of_variant(product:identifier_type) LIKE 'OBJECT%' THEN product:identifier_type:value::STRING ELSE product:identifier_type::STRING END AS identifier_type,
+# MAGIC     CASE WHEN schema_of_variant(product:size) LIKE 'OBJECT%' THEN product:size:value::STRING ELSE product:size::STRING END AS size,
+# MAGIC     CASE WHEN schema_of_variant(product:packaging) LIKE 'OBJECT%' THEN product:packaging:value::STRING ELSE product:packaging::STRING END AS packaging,
+# MAGIC     CASE WHEN schema_of_variant(product:category) LIKE 'OBJECT%' THEN product:category:value::STRING ELSE product:category::STRING END AS category,
+# MAGIC     CASE WHEN schema_of_variant(x:notes) LIKE 'OBJECT%' THEN x:notes:value::STRING ELSE x:notes::STRING END AS notes,
+# MAGIC     current_timestamp() AS extracted_at,
+# MAGIC     file_path AS source_file
+# MAGIC   FROM (SELECT file_path, COALESCE(extracted:response, extracted) AS x FROM extracted_launches)
+# MAGIC   LATERAL VIEW EXPLODE(TRY_CAST(x:products AS ARRAY<VARIANT>)) AS product
+# MAGIC ) AS p
+# MAGIC WHERE article_description IS NOT NULL
 # MAGIC -- A document can list the same product twice; keep one row per document_id
 # MAGIC QUALIFY ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY extracted_at DESC) = 1
 # MAGIC ) AS s
