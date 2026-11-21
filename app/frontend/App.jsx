@@ -74,20 +74,11 @@ function Toasts({ items, onClose }) {
 }
 
 // ------------------------------------------------------------------ uploads
-function UploadPanel({ selected, onSelect, notify, compact = false, canExpand = true, onToggleCollapse, vendor = "", onVendor }) {
+function UploadPanel({ selected, onSelect, notify, collapsed = false, onToggleCollapse, vendor = "", onVendor }) {
   const [uploads, setUploads] = useState([]);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
-  const [open, setOpen] = useState(false);
   const inputRef = useRef(null);
-  const wrapRef = useRef(null);
-  // Compact mode: close the dropdown on outside click
-  useEffect(() => {
-    if (!compact || !open) return undefined;
-    const onDown = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [compact, open]);
 
   const load = useCallback(async () => {
     try { setUploads((await api.uploads()).uploads); } catch (e) { notify(e.message, "error"); }
@@ -111,7 +102,7 @@ function UploadPanel({ selected, onSelect, notify, compact = false, canExpand = 
     }
   }
 
-  const pick = (id) => { onSelect(id); setOpen(false); };
+  const pick = (id) => onSelect(id);
   const current = uploads.find((u) => u.upload_id === selected);
   const openPicker = () => inputRef.current?.click();
   const dropHandlers = {
@@ -198,7 +189,7 @@ function UploadPanel({ selected, onSelect, notify, compact = false, canExpand = 
     </>
   );
 
-  if (!compact) {
+  if (!collapsed) {
     return (
       <div className="panel uploads">
         {fileInput}
@@ -232,30 +223,17 @@ function UploadPanel({ selected, onSelect, notify, compact = false, canExpand = 
     );
   }
 
-  // Collapsed (or narrow window): one slim bar above the grid; past uploads open as a dropdown
+  // Collapsed: a thin strip on the left (expand + upload); the grid takes the freed width
   return (
-    <div className={`panel uploads compact ${drag ? "drag" : ""}`} ref={wrapRef} {...dropHandlers}>
+    <div className={`panel uploads rail ${drag ? "drag" : ""}`} {...dropHandlers}
+         title={current ? `Current file: ${current.file_name}` : "Documents"}>
       {fileInput}
-      <div className="uploads-bar">
-        <button className="primary" disabled={busy} onClick={openPicker} title="Upload a new file (or drop it on this bar)">
-          {busy ? "Uploading…" : "Upload file"}
-        </button>
-        <button onClick={() => setOpen((o) => !o)} aria-expanded={open}>Past uploads ({filtered.length}) ▾</button>
-        <span className="fname" title={current?.file_name}>{current ? current.file_name : "No file selected"}</span>
-        {current && <span className={`badge ${current.status}`}>{current.status}</span>}
-        <span className="spacer" />
-        {vendorSelect}
-        {canExpand && (
-          <button className="icon-btn" title="Show the upload history panel" aria-label="Show the upload history panel" onClick={onToggleCollapse}>»</button>
-        )}
-      </div>
-      {open && (
-        <div className="uploads-drop">
-          <div className="drop-title">Review past uploads <span className="muted">{filtered.length} of {uploads.length}</span></div>
-          {filterNotes}
-          {list}
-        </div>
-      )}
+      <button className="rail-btn" title="Show Documents (upload, vendor filter, past uploads)"
+              aria-label="Show Documents" onClick={onToggleCollapse}>»</button>
+      <button className="rail-btn primary" disabled={busy} onClick={openPicker}
+              title="Upload a new file (or drop it on this strip)" aria-label="Upload a new file">{busy ? "…" : "+"}</button>
+      {vKey && <span className="rail-dot" title={`Vendor filter: ${vendor.trim()}`} />}
+      <span className="rail-label" onClick={onToggleCollapse}>Documents</span>
     </div>
   );
 }
@@ -1022,11 +1000,9 @@ export default function App() {
   }, []);
 
   useEffect(() => { api.me().then(setMe).catch(() => {}); }, []);
-  const narrow = useMediaQuery("(max-width: 1100px)");
   // Shared by the upload history and the review grid; remembered per browser
   const [vendor, setVendor] = useStoredState("plf.vendor", "");
   const [collapsed, setCollapsed] = useStoredState("plf.uploads.collapsed", false);
-  const compactUploads = collapsed || narrow; // narrow windows always use the compact bar
 
   return (
     <div className="app">
@@ -1041,10 +1017,10 @@ export default function App() {
       </header>
       <main>
         {tab === "review" ? (
-          <div className={`review-layout ${compactUploads ? "narrow" : ""}`}>
+          <div className={`review-layout ${collapsed ? "collapsed" : ""}`}>
             <UploadPanel
               selected={uploadId} onSelect={setUploadId} notify={notify}
-              compact={compactUploads} canExpand={!narrow} onToggleCollapse={() => setCollapsed((c) => !c)}
+              collapsed={collapsed} onToggleCollapse={() => setCollapsed((c) => !c)}
               vendor={vendor} onVendor={setVendor}
             />
             <ReviewGrid uploadId={uploadId} notify={notify} vendor={vendor} onClearVendor={() => setVendor("")} />

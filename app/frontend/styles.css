@@ -16,16 +16,13 @@ main > * { flex: 1 1 auto; min-height: 0; }
 /* minmax(0, 1fr) stops the wide table from stretching the column; the grid panel scrolls instead */
 .review-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 16px; }
 .panel.grid { min-width: 0; }
-/* below 1100px: uploads collapse into a one-line picker above the grid */
-.review-layout.narrow { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
-.panel.uploads.compact { position: relative; overflow: visible; padding: 8px 12px; z-index: 12; }
-.uploads-bar { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.uploads-bar .fname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.uploads-drop { position: absolute; top: calc(100% + 4px); left: 0; width: min(420px, 100%); max-height: 70vh; display: flex; flex-direction: column; background: #fff; border: 1px solid #d5dce1; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); padding: 10px; }
-.uploads-drop .upload-list { max-height: 50vh; }
-.uploads-bar { flex-wrap: wrap; }
-.panel.uploads.compact.drag { border-color: #ff3621; background: #fff5f3; }
-.drop-title { font-weight: 600; margin-bottom: 6px; }
+/* Collapsed Documents: thin strip on the left, the grid takes the rest */
+.review-layout.collapsed { grid-template-columns: 44px minmax(0, 1fr); gap: 10px; }
+.panel.uploads.rail { padding: 8px 4px; align-items: center; gap: 8px; }
+.panel.uploads.rail.drag { border-color: #ff3621; background: #fff5f3; }
+.rail-btn { width: 32px; height: 32px; padding: 0; font-size: 16px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.rail-dot { width: 8px; height: 8px; border-radius: 50%; background: #4f46e5; }
+.rail-label { writing-mode: vertical-rl; transform: rotate(180deg); color: #5a6f77; font-weight: 600; font-size: 12px; letter-spacing: .04em; cursor: pointer; margin-top: 4px; }
 /* Expanded upload panel: three labelled steps */
 .uploads-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .uploads-head h2 { font-size: 14px; margin: 0; }
@@ -37,7 +34,6 @@ main > * { flex: 1 1 auto; min-height: 0; }
 .step { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: #1b3139; color: #fff; font-size: 11px; font-weight: 700; flex: none; }
 .dropzone { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 12px; }
 .vendor-select { width: 100%; }
-.uploads-bar .vendor-select { width: auto; max-width: 220px; }
 .note { margin: 0 0 6px; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .chip { background: #eef2ff; color: #3730a3; border-radius: 8px; padding: 0 6px; font-size: 11px; }
