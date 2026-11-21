@@ -12,6 +12,14 @@ Plain-text records from the real runs of this project in the dev workspace, capt
 | [genie.md](genie.md) | Genie answers questions on the governed tables with the SQL it ran, including one wrong answer, why it was wrong, the fix, and the corrected answers | Genie Conversation API |
 | [app.md](app.md) | The app is deployed with its resources, its API returns the expected data, and the Genie insights cache is filled by the app | Apps API, the app's backend, Lakebase |
 
+## Run logs
+
+| File | What it shows | Captured from |
+| --- | --- | --- |
+| [logs/job_task_logs.md](logs/job_task_logs.md) | What every notebook cell printed or returned in the job runs: rows written, accuracy tables, training output, MLflow run and model ids | Jobs API run export, per task run |
+| [logs/mlflow_runs.md](logs/mlflow_runs.md) | The two training runs the job created (tags linking them to the job, metrics) and their logged models (status, files) | MLflow client |
+| [logs/app_logs.md](logs/app_logs.md) | The app's build and startup log, a browser session's requests, and the one error in the log (a stale Lakebase connection) with its traceback and cause | `databricks apps logs` |
+
 ## How to read and reproduce
 
 * SQL blocks can be rerun as-is in a notebook or the SQL editor on `patricia_aws_serverless_catalog`.
@@ -26,4 +34,9 @@ Plain-text records from the real runs of this project in the dev workspace, capt
 
 ## Why not notebook outputs
 
-The notebooks in `src/` are committed without outputs: committing `.ipynb` outputs needs a workspace admin setting (off by default) and a `.databricks/commit_outputs` file, and the outputs are stored as JSON, which is hard to read. These Markdown files carry the same results in readable form.
+The notebooks in `src/` are committed without outputs: committing `.ipynb` outputs needs a workspace admin setting (off by default) and a `.databricks/commit_outputs` file, and the outputs are stored as JSON, which is hard to read. Job runs also don't write outputs back to the notebooks in the repo. [logs/job_task_logs.md](logs/job_task_logs.md) carries the outputs of the actual job runs as readable text instead.
+
+## Known issues found in the logs
+
+* **Stale Lakebase connection (app):** after a long idle period, the first `GET /api/uploads` can fail once with a 500 (`psycopg.errors.AdminShutdown`), because Lakebase suspends after 300 s idle and the connection pool hands out the closed connection. The retry succeeds. Not yet fixed. See [logs/app_logs.md](logs/app_logs.md).
+* **Harmless warnings:** MLflow notes the model wrapper has no type hints and can't read one optional notebook tag on serverless; the SDK falls back to default file endpoints after a 403; the front-end bundle is over 500 kB; `npm audit` reports 2 findings in build dependencies.
