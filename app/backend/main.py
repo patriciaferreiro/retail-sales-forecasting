@@ -1281,13 +1281,26 @@ def _jsonable(row: dict) -> dict:
 
 
 _DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dist")
+
+
+class _ImmutableAssets(StaticFiles):
+    """Vite asset names contain a content hash, so they can be cached for a year."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        if resp.status_code == 200:
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
+
+
 if os.path.isdir(_DIST):
-    app.mount("/assets", StaticFiles(directory=os.path.join(_DIST, "assets")), name="assets")
+    app.mount("/assets", _ImmutableAssets(directory=os.path.join(_DIST, "assets")), name="assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(404)
-        return FileResponse(os.path.join(_DIST, "index.html"))
+        # Always revalidate the page, so a new deployment's assets load on the next visit
+        return FileResponse(os.path.join(_DIST, "index.html"), headers={"Cache-Control": "no-cache"})
 else:
     log.warning("Frontend build not found at %s", _DIST)
