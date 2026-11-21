@@ -1,20 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Area, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { api } from "./api.js";
 
+// Grid columns. Description comes first so it can be pinned with the checkbox and status columns.
+// w = cell width in px (inputs fill the cell); hideable columns can be toggled in the Columns menu.
 const COLUMNS = [
-  { key: "client_id", label: "Client", width: 110 },
-  { key: "article_description", label: "Description", width: 220 },
-  { key: "launch_date", label: "Launch date", width: 130, type: "date" },
-  { key: "identifier_old", label: "Old ID", width: 140 },
-  { key: "identifier_new", label: "New ID", width: 140 },
-  { key: "identifier_type", label: "ID type", width: 80 },
-  { key: "size", label: "Size", width: 80 },
-  { key: "packaging", label: "Packaging", width: 100 },
-  { key: "category", label: "Category", width: 120 },
-  { key: "notes", label: "Notes", width: 180 },
+  { key: "article_description", label: "Description", w: 240, pin: "pin-3 pin-last" },
+  { key: "client_id", label: "Client", w: 110 },
+  { key: "launch_date", label: "Launch date", w: 140, type: "date" },
+  { key: "identifier_old", label: "Old ID", w: 130 },
+  { key: "identifier_new", label: "New ID", w: 130 },
+  { key: "identifier_type", label: "ID type", w: 75 },
+  { key: "size", label: "Size", w: 80, hideable: true },
+  { key: "packaging", label: "Packaging", w: 100, hideable: true },
+  { key: "category", label: "Category", w: 120, hideable: true },
+  { key: "notes", label: "Notes", w: 180, hideable: true },
 ];
 const ACTIVE_RUN = ["QUEUED", "PENDING", "RUNNING", "BLOCKED", "WAITING_FOR_RETRY", "TERMINATING"];
 
@@ -31,6 +33,32 @@ function usePolling(fn, ms, enabled = true) {
 
 const fmtTime = (t) => (t ? new Date(t).toLocaleString() : "");
 
+// State that survives reloads (per browser)
+function useStoredState(key, initial) {
+  const [value, setValue] = useState(() => {
+    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : initial; } catch { return initial; }
+  });
+  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ } }, [key, value]);
+  return [value, setValue];
+}
+
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const onChange = () => setMatches(mq.matches);
+    mq.addEventListener("change", onChange);
+    onChange();
+    return () => mq.removeEventListener("change", onChange);
+  }, [query]);
+  return matches;
+}
+
+const HIDEABLE = [
+  ...COLUMNS.filter((c) => c.hideable).map((c) => ({ key: c.key, label: c.label })),
+  { key: "updated_at", label: "Last edit" },
+];
+
 // ------------------------------------------------------------------ toasts
 function Toasts({ items, onClose }) {
   return (
@@ -43,11 +71,20 @@ function Toasts({ items, onClose }) {
 }
 
 // ------------------------------------------------------------------ uploads
-function UploadPanel({ selected, onSelect, notify }) {
+function UploadPanel({ selected, onSelect, notify, compact = false }) {
   const [uploads, setUploads] = useState([]);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
+  const [open, setOpen] = useState(false);
   const inputRef = useRef(null);
+  const wrapRef = useRef(null);
+  // Compact mode: close the dropdown on outside click
+  useEffect(() => {
+    if (!compact || !open) return undefined;
+    const onDown = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [compact, open]);
 
   const load = useCallback(async () => {
     try { setUploads((await api.uploads()).uploads); } catch (e) { notify(e.message, "error"); }
@@ -71,8 +108,11 @@ function UploadPanel({ selected, onSelect, notify }) {
     }
   }
 
-  return (
-    <div className="panel uploads">
+  const pick = (id) => { onSelect(id); setOpen(false); };
+  const current = uploads.find((u) => u.upload_id === selected);
+
+  const body = (
+    <>
       <div
         className={`dropzone ${drag ? "drag" : ""}`}
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
@@ -87,7 +127,7 @@ function UploadPanel({ selected, onSelect, notify }) {
       <h3>Uploads</h3>
       <ul className="upload-list">
         {uploads.map((u) => (
-          <li key={u.upload_id} className={u.upload_id === selected ? "active" : ""} onClick={() => onSelect(u.upload_id)}>
+          <li key={u.upload_id} className={u.upload_id === selected ? "active" : ""} onClick={() => pick(u.upload_id)}>
             <div className="row1">
               <span className="fname" title={u.file_name}>{u.file_name}</span>
               <span className={`badge ${u.status}`}>{u.status}</span>
@@ -108,6 +148,19 @@ function UploadPanel({ selected, onSelect, notify }) {
         ))}
         {!uploads.length && <li className="empty">No uploads yet</li>}
       </ul>
+    </>
+  );
+
+  if (!compact) return <div className="panel uploads">{body}</div>;
+  // Narrow screens: a one-line picker above the grid; the full panel opens as a dropdown
+  return (
+    <div className="panel uploads compact" ref={wrapRef}>
+      <div className="uploads-bar">
+        <button onClick={() => setOpen((o) => !o)} aria-expanded={open}>Uploads ▾</button>
+        <span className="fname" title={current?.file_name}>{current ? current.file_name : "Select an upload"}</span>
+        {current && <span className={`badge ${current.status}`}>{current.status}</span>}
+      </div>
+      {open && <div className="uploads-drop">{body}</div>}
     </div>
   );
 }
@@ -128,13 +181,14 @@ function Cell({ row, col, issues, onSave, setEditing }) {
     setEditing(false);
     if (String(value) !== String(original)) onSave(row, { [col.key]: value });
   };
+  const issueText = fieldIssues.map((i) => i.message).join("\n");
   return (
-    <td className={level} title={fieldIssues.map((i) => i.message).join("\n")}>
+    <td className={`${level} ${col.pin ? `pin ${col.pin}` : ""}`} style={{ width: col.w, minWidth: col.w, maxWidth: col.w }}>
       <input
         type={col.type === "date" ? "date" : "text"}
         value={value ?? ""}
         disabled={disabled}
-        style={{ width: col.width }}
+        title={issueText || (value ? String(value) : "")}
         onFocus={() => { focused.current = true; setEditing(true); }}
         onChange={(e) => setValue(e.target.value)}
         onBlur={commit}
@@ -445,6 +499,11 @@ function ReviewGrid({ uploadId, notify }) {
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(false);
   const [openId, setOpenId] = useState(null);
+  const [hidden, setHidden] = useStoredState("plf.grid.hiddenColumns", []);
+  const [density, setDensity] = useStoredState("plf.grid.density", "comfortable");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+  const tableRef = useRef(null);
   const editing = useRef(false);
   const setEditing = (v) => { editing.current = v; };
 
@@ -493,6 +552,28 @@ function ReviewGrid({ uploadId, notify }) {
     } catch (e) { notify(`Publish failed: ${e.message}`, "error"); }
   }
 
+  // Close the Columns menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onDown = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
+  const shownCols = COLUMNS.filter((c) => !hidden.includes(c.key));
+  const showEdit = !hidden.includes("updated_at");
+  const toggleCol = (key) => setHidden((h) => (h.includes(key) ? h.filter((k) => k !== key) : [...h, key]));
+
+  // Pinned columns: measure the real widths of columns 1 and 2 so the sticky left offsets never overlap
+  useLayoutEffect(() => {
+    const t = tableRef.current;
+    if (!t) return;
+    const c1 = t.querySelector("th.pin-1");
+    const c2 = t.querySelector("th.pin-2");
+    if (!c1 || !c2) return;
+    t.style.setProperty("--pin2-left", `${c1.offsetWidth}px`);
+    t.style.setProperty("--pin3-left", `${c1.offsetWidth + c2.offsetWidth}px`);
+  });
+
   const visible = useMemo(() => rows.filter((r) => {
     if (filter === "all") return true;
     if (filter === "issues") return r.validation_errors?.length > 0;
@@ -516,6 +597,24 @@ function ReviewGrid({ uploadId, notify }) {
             <option key={s} value={s}>{s} ({rows.filter((r) => r.status === s).length})</option>
           ))}
         </select>
+        <div className="col-menu" ref={menuRef}>
+          <button onClick={() => setMenuOpen((o) => !o)} aria-expanded={menuOpen}>
+            Columns{hidden.length ? ` (${hidden.length} hidden)` : ""} ▾
+          </button>
+          {menuOpen && (
+            <div className="col-menu-pop">
+              {HIDEABLE.map((h) => (
+                <label key={h.key}>
+                  <input type="checkbox" checked={!hidden.includes(h.key)} onChange={() => toggleCol(h.key)} /> {h.label}
+                </label>
+              ))}
+              <button className="link" disabled={!hidden.length} onClick={() => setHidden([])}>Show all</button>
+            </div>
+          )}
+        </div>
+        <button title="Row height" onClick={() => setDensity((d) => (d === "compact" ? "comfortable" : "compact"))}>
+          {density === "compact" ? "Comfortable rows" : "Compact rows"}
+        </button>
         <span className="spacer" />
         <button disabled={!selected.size} onClick={() => changeStatus("approved")}>Approve ({selected.size})</button>
         <button disabled={!selected.size} onClick={() => changeStatus("rejected")}>Reject</button>
@@ -525,15 +624,17 @@ function ReviewGrid({ uploadId, notify }) {
       {loading ? <div className="empty-state">Loading…</div> : !rows.length ? (
         <div className="empty-state">No products yet. Extraction can take a minute.</div>
       ) : (
-        <div className="table-wrap">
-          <table>
+        <div className={`table-wrap ${density === "compact" ? "compact" : ""}`}>
+          <table ref={tableRef}>
             <thead>
               <tr>
-                <th><input type="checkbox" checked={allSelected} onChange={toggleAll} /></th>
-                <th>Status</th>
-                {COLUMNS.map((c) => <th key={c.key}>{c.label}</th>)}
-                <th>Issues</th>
-                <th>Last edit</th>
+                <th className="pin pin-1"><input type="checkbox" checked={allSelected} onChange={toggleAll} /></th>
+                <th className="pin pin-2">Status</th>
+                {shownCols.map((c) => (
+                  <th key={c.key} className={c.pin ? `pin ${c.pin}` : ""} style={{ width: c.w, minWidth: c.w, maxWidth: c.w }}>{c.label}</th>
+                ))}
+                <th className="col-issues">Issues</th>
+                {showEdit && <th className="col-edit">Last edit</th>}
               </tr>
             </thead>
             <tbody>
@@ -541,18 +642,23 @@ function ReviewGrid({ uploadId, notify }) {
                 const issues = r.validation_errors || [];
                 return (
                   <tr key={r.product_id} className={`st-${r.status}`}>
-                    <td><input type="checkbox" disabled={r.status === "published"} checked={selected.has(r.product_id)} onChange={() => toggle(r.product_id)} /></td>
-                    <td>
+                    <td className="pin pin-1"><input type="checkbox" disabled={r.status === "published"} checked={selected.has(r.product_id)} onChange={() => toggle(r.product_id)} /></td>
+                    <td className="pin pin-2">
                       <button className="link" title="Open product details" onClick={() => setOpenId(r.product_id)}>Details</button>{" "}
                       <span className={`badge ${r.status}`}>{r.status}</span>
                     </td>
-                    {COLUMNS.map((c) => (
+                    {shownCols.map((c) => (
                       <Cell key={c.key} row={r} col={c} issues={issues} onSave={save} setEditing={setEditing} />
                     ))}
-                    <td className="issues clickable" title="Open product details" onClick={() => setOpenId(r.product_id)}>
+                    <td className="issues col-issues clickable" onClick={() => setOpenId(r.product_id)}
+                        title={[...issues.map((i) => i.message), "Click to open product details"].join("\n")}>
                       {issues.map((i, n) => <div key={n} className={i.severity}>{i.message}</div>)}
                     </td>
-                    <td className="muted">{r.updated_by}<br />{fmtTime(r.updated_at)}</td>
+                    {showEdit && (
+                      <td className="muted col-edit" title={`${r.updated_by} · ${fmtTime(r.updated_at)}`}>
+                        <span>{r.updated_by}</span> <span className="edit-time">{fmtTime(r.updated_at)}</span>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -804,6 +910,7 @@ export default function App() {
   }, []);
 
   useEffect(() => { api.me().then(setMe).catch(() => {}); }, []);
+  const narrow = useMediaQuery("(max-width: 1100px)");
 
   return (
     <div className="app">
@@ -818,8 +925,8 @@ export default function App() {
       </header>
       <main>
         {tab === "review" ? (
-          <div className="review-layout">
-            <UploadPanel selected={uploadId} onSelect={setUploadId} notify={notify} />
+          <div className={`review-layout ${narrow ? "narrow" : ""}`}>
+            <UploadPanel selected={uploadId} onSelect={setUploadId} notify={notify} compact={narrow} />
             <ReviewGrid uploadId={uploadId} notify={notify} />
           </div>
         ) : tab === "check" ? (
