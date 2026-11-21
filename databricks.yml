@@ -22,6 +22,9 @@ variables:
   lakebase_project_id:
     description: Lakebase Autoscaling project that backs the app review queue
     default: product-launch-forecast
+  genie_space_id:
+    description: Genie space the app's Ask Genie panel uses (sales forecasts and changeover impact)
+    default: 01f1e5a99d2d1c66aef6ac589e154cd7
 
 targets:
   dev:

@@ -51,6 +51,26 @@ resources:
               catalog: ${var.catalog}
           description: "Retrain the MLflow LightGBM model and write gold.launch_forecasts_mlflow"
 
+        # Weekly unit sales per product: ai_forecast on the SQL warehouse, then the MLflow model (serverless)
+        - task_key: run_sales_forecast
+          depends_on:
+            - task_key: extract_product_data
+          notebook_task:
+            notebook_path: ../src/forecasting/run_sales_forecast.ipynb
+            base_parameters:
+              catalog: ${var.catalog}
+            warehouse_id: ${var.warehouse_id}
+          description: "ai_forecast of weekly unit sales per product, plus 12-week holdout accuracy"
+
+        - task_key: sales_forecast_mlflow
+          depends_on:
+            - task_key: run_sales_forecast
+          notebook_task:
+            notebook_path: ../src/forecasting/run_sales_forecast_mlflow.ipynb
+            base_parameters:
+              catalog: ${var.catalog}
+          description: "MLflow LightGBM sales forecast per product, accuracy, and the combined gold.sales_forecast view"
+
         - task_key: sync_forecast_to_lakebase
           depends_on:
             - task_key: run_forecast

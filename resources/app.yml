@@ -57,3 +57,9 @@ resources:
             securable_full_name: ${var.catalog}.bronze.raw_documents
             securable_type: VOLUME
             permission: WRITE_VOLUME
+        # Genie space behind the Ask Genie panel (Forecast and Changeover impact pages)
+        - name: genie-space
+          genie_space:
+            name: Product Sales & Changeover Analyst
+            space_id: ${var.genie_space_id}
+            permission: CAN_RUN

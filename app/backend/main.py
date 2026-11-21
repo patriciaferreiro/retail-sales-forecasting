@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -1131,6 +1131,111 @@ def changeover_weekly(gtin_old: str):
 
 def normalize_vendor(s: str | None) -> str:
     return (s or "").strip().lower()
+
+
+# --------------------------------------------------------------------------- sales forecast per product
+
+def _sales_products() -> dict:
+    try:
+        rows = run_sql(
+            f"""SELECT product_key, MIN(client_id) AS client_id, MIN(article_description) AS article_description,
+                       MIN(category) AS category, MIN(current_gtin) AS current_gtin
+                FROM {config.SALES_FORECAST_VIEW} GROUP BY product_key ORDER BY client_id, article_description"""
+        )
+        acc = run_sql(
+            f"""SELECT model, wape_pct, mae_units, coverage_pct, bias_pct, CAST(holdout_start AS STRING) AS holdout_start,
+                       CAST(holdout_end AS STRING) AS holdout_end FROM {config.SALES_ACCURACY_TABLE}"""
+        )
+    except SqlError as exc:
+        log.warning("Sales forecast unavailable: %s", exc)
+        return {"products": [], "accuracy": {}, "error": "not_run" if _missing_table(exc) else "no_access"}
+    accuracy = {a["model"]: {k: (float(a[k]) if a[k] is not None and k.endswith(("pct", "units")) else a[k])
+                             for k in a if k != "model"} for a in acc}
+    return {"products": rows, "accuracy": accuracy, "error": None}
+
+
+@app.get("/api/sales-forecast/products")
+def sales_products():
+    return _cached("sales_products", _sales_products, ttl=300)
+
+
+@app.get("/api/sales-forecast/{product_key}")
+def sales_forecast(product_key: str):
+    if not product_key.isdigit() or len(product_key) > 14:
+        raise HTTPException(400, "product_key must be a numeric GTIN")
+    try:
+        actuals = run_sql(
+            f"""SELECT CAST(week AS STRING) AS week, units, revenue_eur, promo_share FROM {config.PRODUCT_WEEKLY_SALES_VIEW}
+                WHERE product_key = :p AND week > date_sub(current_date(), 7 * 60) ORDER BY week""",
+            {"p": product_key},
+        )
+        fc = run_sql(
+            f"""SELECT model, CAST(week AS STRING) AS week, forecast_units, lower_units, upper_units, CAST(generated_at AS STRING) AS generated_at
+                FROM {config.SALES_FORECAST_VIEW} WHERE product_key = :p ORDER BY model, week""",
+            {"p": product_key},
+        )
+    except SqlError as exc:
+        log.warning("Sales forecast unavailable: %s", exc)
+        raise HTTPException(503, "Sales forecast not available (not run yet or no access)")
+    for r in actuals:
+        r["units"] = float(r["units"]) if r["units"] is not None else None
+    for r in fc:
+        for k in ("forecast_units", "lower_units", "upper_units"):
+            r[k] = float(r[k]) if r[k] is not None else None
+    return {"product_key": product_key, "actuals": actuals, "forecast": fc}
+
+
+# --------------------------------------------------------------------------- Ask Genie
+
+class GenieAsk(BaseModel):
+    question: str
+    conversation_id: str | None = None
+
+
+GENIE_MAX_ROWS = 100
+
+
+@app.post("/api/genie/ask")
+def genie_ask(body: GenieAsk, request: Request):
+    """Ask the Genie space a question (or a follow-up in the same conversation). Runs as the app service principal."""
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(400, "Question is empty")
+    if len(question) > 2000:
+        raise HTTPException(400, "Question is too long (max 2000 characters)")
+    if not config.GENIE_SPACE_ID:
+        raise HTTPException(503, "No Genie space is configured for this app")
+    log.info("Genie question from %s: %s", current_user(request), question[:200])
+    try:
+        if body.conversation_id:
+            msg = w.genie.create_message_and_wait(config.GENIE_SPACE_ID, body.conversation_id, question, timeout=timedelta(minutes=4))
+        else:
+            msg = w.genie.start_conversation_and_wait(config.GENIE_SPACE_ID, question, timeout=timedelta(minutes=4))
+    except Exception as exc:  # timeouts, permission errors, unavailable space
+        log.exception("Genie request failed")
+        raise HTTPException(502, f"Genie could not answer: {exc}")
+    out = {"conversation_id": msg.conversation_id, "message_id": msg.message_id,
+           "status": msg.status.value if msg.status else None, "text": None, "sql": None, "sql_description": None,
+           "columns": [], "rows": [], "row_count": 0, "truncated": False, "suggested_questions": [],
+           "error": msg.error.error if getattr(msg, "error", None) else None}
+    for a in msg.attachments or []:
+        if a.text and a.text.content:
+            out["text"] = (out["text"] + "\n\n" if out["text"] else "") + a.text.content
+        if a.query:
+            out["sql"], out["sql_description"] = a.query.query, a.query.description
+            try:
+                qr = w.genie.get_message_attachment_query_result(config.GENIE_SPACE_ID, msg.conversation_id, msg.message_id, a.attachment_id)
+                sr = qr.statement_response
+                rows = (sr.result.data_array or []) if sr and sr.result else []
+                out["columns"] = [c.name for c in sr.manifest.schema.columns] if sr and sr.manifest else []
+                out["row_count"] = len(rows)
+                out["rows"], out["truncated"] = rows[:GENIE_MAX_ROWS], len(rows) > GENIE_MAX_ROWS
+            except Exception as exc:
+                log.warning("Could not fetch the Genie query result: %s", exc)
+        sq = getattr(a, "suggested_questions", None)
+        if sq and getattr(sq, "questions", None):
+            out["suggested_questions"] = list(sq.questions)[:3]
+    return out
 
 
 # --------------------------------------------------------------------------- utils + static
