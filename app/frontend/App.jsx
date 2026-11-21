@@ -1608,11 +1608,10 @@ export default function App() {
     <div className="app">
       <header>
         <h1>Product Launch Forecast</h1>
-        <nav>
-          <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>Upload &amp; review</button>
-          <button className={tab === "check" ? "on" : ""} onClick={() => setTab("check")}>Ingestion check</button>
-          <button className={tab === "forecast" ? "on" : ""} onClick={() => setTab("forecast")}>Forecast</button>
-          <button className={tab === "impact" ? "on" : ""} onClick={() => setTab("impact")}>Changeover impact</button>
+        <nav aria-label="Main">
+          {[["review", "Upload & review"], ["check", "Ingestion check"], ["forecast", "Forecast"], ["impact", "Changeover impact"]].map(([k, label]) => (
+            <button key={k} className={tab === k ? "on" : ""} aria-current={tab === k ? "page" : undefined} onClick={() => setTab(k)}>{label}</button>
+          ))}
         </nav>
         <button className="arch-btn" onClick={() => setShowArch(true)} title="Architecture, Databricks components and data flow">Architecture</button>
         <span className="user">{me?.email}</span>
