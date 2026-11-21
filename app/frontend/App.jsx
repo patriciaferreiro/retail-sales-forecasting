@@ -232,7 +232,11 @@ function UploadPanel({ selected, onSelect, notify, collapsed = false, onToggleCo
               aria-label="Show Documents" onClick={onToggleCollapse}>»</button>
       <button className="rail-btn primary" disabled={busy} onClick={openPicker}
               title="Upload a new file (or drop it on this strip)" aria-label="Upload a new file">{busy ? "…" : "+"}</button>
-      {vKey && <span className="rail-dot" title={`Vendor filter: ${vendor.trim()}`} />}
+      {vKey && (
+        <span className="rail-vendor" title={`Vendor filter: ${vendor.trim()} (click to show Documents)`} onClick={onToggleCollapse}>
+          {vendor.trim()}
+        </span>
+      )}
       <span className="rail-label" onClick={onToggleCollapse}>Documents</span>
     </div>
   );

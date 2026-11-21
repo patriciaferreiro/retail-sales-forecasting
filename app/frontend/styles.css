@@ -21,7 +21,8 @@ main > * { flex: 1 1 auto; min-height: 0; }
 .panel.uploads.rail { padding: 8px 4px; align-items: center; gap: 8px; }
 .panel.uploads.rail.drag { border-color: #ff3621; background: #fff5f3; }
 .rail-btn { width: 32px; height: 32px; padding: 0; font-size: 16px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
-.rail-dot { width: 8px; height: 8px; border-radius: 50%; background: #4f46e5; }
+/* active vendor filter, written vertically like the Documents label; long names are cut with an ellipsis */
+.rail-vendor { writing-mode: vertical-rl; transform: rotate(180deg); background: #eef2ff; color: #3730a3; border-radius: 8px; padding: 6px 2px; font-size: 11px; font-weight: 600; max-height: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .rail-label { writing-mode: vertical-rl; transform: rotate(180deg); color: #5a6f77; font-weight: 600; font-size: 12px; letter-spacing: .04em; cursor: pointer; margin-top: 4px; }
 /* Expanded upload panel: three labelled steps */
 .uploads-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
