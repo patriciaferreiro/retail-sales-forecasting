@@ -41,6 +41,16 @@ resources:
             warehouse_id: ${var.warehouse_id}
           description: "Generate 12-week launch forecasts per client"
 
+        # Second model for comparison: global LightGBM tracked in MLflow (serverless compute)
+        - task_key: forecast_mlflow
+          depends_on:
+            - task_key: extract_product_data
+          notebook_task:
+            notebook_path: ../src/forecasting/run_forecast_mlflow.ipynb
+            base_parameters:
+              catalog: ${var.catalog}
+          description: "Retrain the MLflow LightGBM model and write gold.launch_forecasts_mlflow"
+
         - task_key: sync_forecast_to_lakebase
           depends_on:
             - task_key: run_forecast

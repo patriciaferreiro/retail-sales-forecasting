@@ -25,6 +25,7 @@ async function request(method, path, body, isForm = false) {
 
 export const api = {
   me: () => request("GET", "/api/me"),
+  architecture: () => request("GET", "/api/architecture"),
   uploads: () => request("GET", "/api/uploads"),
   upload: (files) => {
     const form = new FormData();
