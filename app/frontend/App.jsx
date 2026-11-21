@@ -74,6 +74,122 @@ function Toasts({ items, onClose }) {
 }
 
 // ------------------------------------------------------------------ uploads
+// ------------------------------------------------------------------ UI building blocks
+// Inline icons (stroke style), so no icon library is needed
+const ICON_PATHS = {
+  upload: "M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3",
+  check: "M9 11l3 3 8-8M20 12v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h11",
+  trend: "M3 17l6-6 4 4 8-8M15 7h6v6",
+  swap: "M7 7h13l-3-3M17 17H4l3 3",
+  layers: "M12 3 2 8l10 5 10-5-10-5zM2 13l10 5 10-5M2 18l10 5 10-5",
+  collapse: "M15 6l-6 6 6 6",
+  expand: "M9 6l6 6-6 6",
+  user: "M20 21a8 8 0 0 0-16 0M12 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
+  sparkle: "M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8L12 3zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z",
+  play: "M7 5v14l11-7L7 5z",
+  search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-5-5",
+  up: "M12 19V5m0 0-6 6m6-6 6 6",
+  down: "M12 5v14m0 0-6-6m6 6 6-6",
+};
+function Icon({ name, size = 18, className = "" }) {
+  return (
+    <svg className={`icon ${className}`} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={ICON_PATHS[name]} /></svg>
+  );
+}
+
+// Placeholder blocks while data loads (instead of "Loading…")
+function Skeleton({ rows = 3, chart = false }) {
+  return (
+    <div className="skeleton" aria-busy="true" aria-label="Loading">
+      {chart && <div className="sk sk-kpis">{[0, 1, 2, 3].map((i) => <div key={i} className="sk-block" />)}</div>}
+      {chart && <div className="sk-block sk-chart" />}
+      {Array.from({ length: rows }).map((_, i) => <div key={i} className="sk-block sk-line" style={{ width: `${90 - i * 12}%` }} />)}
+    </div>
+  );
+}
+
+function Segmented({ value, options, onChange, label }) {
+  return (
+    <div className="segmented" role="radiogroup" aria-label={label}>
+      {options.map(([v, text]) => (
+        <button key={v} role="radio" aria-checked={value === v} className={value === v ? "on" : ""} onClick={() => onChange(v)}>{text}</button>
+      ))}
+    </div>
+  );
+}
+
+// Effect with its 95% range on a shared scale; the zero line shows whether the range excludes no-change
+function ConfidenceBar({ effect, low, high, min, max, big = false }) {
+  if (effect == null || low == null || high == null) return null;
+  const span = Math.max(max - min, 1e-6);
+  const x = (v) => `${((Math.min(Math.max(v, min), max) - min) / span) * 100}%`;
+  const cls = low > 0 ? "up" : high < 0 ? "down" : "flat";
+  return (
+    <div className={`cbar ${big ? "big" : ""} ${cls}`} title={`${pct(effect)} (95% range ${pct(low)} to ${pct(high)})`}>
+      <div className="cbar-track" />
+      <div className="cbar-zero" style={{ left: x(0) }} />
+      <div className="cbar-range" style={{ left: x(low), width: `calc(${x(high)} - ${x(low)})` }} />
+      <div className="cbar-dot" style={{ left: x(effect) }} />
+      {big && <div className="cbar-labels"><span>{pct(min, 0)}</span><span style={{ left: x(0) }}>0%</span><span>{pct(max, 0)}</span></div>}
+    </div>
+  );
+}
+
+const PAGES = {
+  review: { title: "Upload & review", icon: "upload", group: "Work", desc: "Upload vendor documents, check the extracted products, fix issues and publish them." },
+  check: { title: "Ingestion check", icon: "check", group: "Work", desc: "Compare each document with what AI extracted from it." },
+  forecast: { title: "Sales forecast", icon: "trend", group: "Insights", desc: "Weekly unit sales per product for the next 12 weeks, from two models, with Genie's analysis." },
+  impact: { title: "Changeover impact", icon: "swap", group: "Insights", desc: "How weekly sales changed after each GTIN changeover, compared with similar unchanged products." },
+};
+
+function PageHeader({ page }) {
+  const p = PAGES[page];
+  return (
+    <div className="page-header">
+      <div className="ph-icon"><Icon name={p.icon} size={20} /></div>
+      <div>
+        <h2 className="ph-title">{p.title}</h2>
+        <p className="ph-desc">{p.desc}</p>
+      </div>
+    </div>
+  );
+}
+
+function Sidebar({ tab, onTab, collapsed, onToggle, onArchitecture, email }) {
+  const groups = [...new Set(Object.values(PAGES).map((p) => p.group))];
+  return (
+    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`} aria-label="Main navigation">
+      <div className="sb-brand">
+        <span className="sb-logo" aria-hidden="true" />
+        <span className="sb-name">Product Launch<br />Forecast</span>
+      </div>
+      <nav className="sb-nav">
+        {groups.map((g) => (
+          <div key={g} className="sb-group">
+            <div className="sb-group-label">{g}</div>
+            {Object.entries(PAGES).filter(([, p]) => p.group === g).map(([k, p]) => (
+              <button key={k} className={`sb-item ${tab === k ? "on" : ""}`} aria-current={tab === k ? "page" : undefined}
+                      title={collapsed ? p.title : undefined} onClick={() => onTab(k)}>
+                <Icon name={p.icon} /><span className="sb-label">{p.title}</span>
+              </button>
+            ))}
+          </div>
+        ))}
+      </nav>
+      <div className="sb-bottom">
+        <button className="sb-item" onClick={onArchitecture} title="Architecture, Databricks components and data flow">
+          <Icon name="layers" /><span className="sb-label">Architecture</span>
+        </button>
+        <div className="sb-user" title={email || ""}><Icon name="user" /><span className="sb-label">{email || "…"}</span></div>
+        <button className="sb-item sb-toggle" onClick={onToggle} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+          <Icon name={collapsed ? "expand" : "collapse"} /><span className="sb-label">Collapse</span>
+        </button>
+      </div>
+    </aside>
+  );
+}
+
 function UploadPanel({ selected, onSelect, notify, collapsed = false, onToggleCollapse, vendor = "", onVendor }) {
   const [uploads, setUploads] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -666,12 +782,41 @@ function ReviewGrid({ uploadId, notify, vendor = "", onClearVendor }) {
   if (!uploadId) return <div className="panel grid empty-state">Select or upload a document to review its products.</div>;
 
   const approvedCount = vrows.filter((r) => r.status === "approved").length;
+  const count = (s) => vrows.filter((r) => r.status === s).length;
+  const sev = (s) => vrows.filter((r) => (r.validation_errors || []).some((i) => i.severity === s) && r.status !== "published" && r.status !== "rejected").length;
+  const nPending = count("pending"), nPublished = count("published"), nErrors = sev("error"), nWarnings = sev("warning");
+  // Steps: 1 upload (done once there are products), 2 review (done when nothing is pending), 3 publish (done when nothing approved is left)
+  const steps = [
+    { label: "Upload", done: rows.length > 0 },
+    { label: "Review", done: rows.length > 0 && nPending === 0 },
+    { label: "Publish", done: rows.length > 0 && nPending === 0 && approvedCount === 0 && nPublished > 0 },
+  ];
+  const activeStep = steps.findIndex((s) => !s.done);
   const allSelected = visible.length > 0 && visible.every((r) => selected.has(r.product_id));
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(visible.filter((r) => r.status !== "published").map((r) => r.product_id)));
   const toggle = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   return (
     <div className="panel grid">
+      {rows.length > 0 && (
+        <div className="review-status">
+          <ol className="steps" aria-label="Progress">
+            {steps.map((s, i) => (
+              <li key={s.label} className={s.done ? "done" : i === activeStep ? "current" : ""} aria-current={i === activeStep ? "step" : undefined}>
+                <span className="step-dot">{s.done ? "✓" : i + 1}</span>{s.label}
+              </li>
+            ))}
+          </ol>
+          <div className="sum-chips">
+            <button className={`sum-chip err ${filter === "issues" ? "on" : ""}`} disabled={!nErrors && !nWarnings} onClick={() => setFilter("issues")}
+                    title="Show products with issues"><b>{nErrors}</b> errors</button>
+            <span className="sum-chip warn"><b>{nWarnings}</b> warnings</span>
+            <button className={`sum-chip ${filter === "pending" ? "on" : ""}`} onClick={() => setFilter("pending")}><b>{nPending}</b> to review</button>
+            <button className={`sum-chip ok ${filter === "approved" ? "on" : ""}`} onClick={() => setFilter("approved")}><b>{approvedCount}</b> approved</button>
+            <button className={`sum-chip pub ${filter === "published" ? "on" : ""}`} onClick={() => setFilter("published")}><b>{nPublished}</b> published</button>
+          </div>
+        </div>
+      )}
       <div className="toolbar">
         <select value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="all">All ({vrows.length})</option>
@@ -699,9 +844,7 @@ function ReviewGrid({ uploadId, notify, vendor = "", onClearVendor }) {
           {density === "compact" ? "Comfortable rows" : "Compact rows"}
         </button>
         <span className="spacer" />
-        <button disabled={!selected.size} onClick={() => changeStatus("approved")}>Approve ({selected.size})</button>
-        <button disabled={!selected.size} onClick={() => changeStatus("rejected")}>Reject</button>
-        <button disabled={!selected.size} onClick={() => changeStatus("pending")}>Back to pending</button>
+        <span className="muted small">Select rows to approve or reject them</span>
         <button className="primary" disabled={!approvedCount} onClick={publish}>Publish {approvedCount} approved</button>
       </div>
       {vKey && rows.length > 0 && (
@@ -710,7 +853,7 @@ function ReviewGrid({ uploadId, notify, vendor = "", onClearVendor }) {
           <button className="link" onClick={onClearVendor}>Clear filter</button>
         </div>
       )}
-      {loading ? <div className="empty-state">Loading…</div> : !rows.length ? (
+      {loading ? <Skeleton rows={6} /> : !rows.length ? (
         <div className="empty-state">No products yet. Extraction can take a minute.</div>
       ) : vKey && !vrows.length ? (
         <div className="empty-state">
@@ -758,6 +901,16 @@ function ReviewGrid({ uploadId, notify, vendor = "", onClearVendor }) {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+      {selected.size > 0 && (
+        <div className="bulk-bar" role="region" aria-label="Selected products">
+          <span className="bulk-count"><b>{selected.size}</b> selected</span>
+          <button className="primary" onClick={() => changeStatus("approved")}>Approve</button>
+          <button onClick={() => changeStatus("rejected")}>Reject</button>
+          <button onClick={() => changeStatus("pending")}>Back to pending</button>
+          <span className="spacer" />
+          <button className="link" onClick={() => setSelected(new Set())}>Clear selection</button>
         </div>
       )}
       {openId && (
@@ -1180,7 +1333,9 @@ function SalesForecastPage({ notify, vendor, onVendor }) {
   const [data, setData] = useState(null);
   const [runs, setRuns] = useState([]);
   const [show, setShow] = useStoredState("plf.sales.show", { ai: true, ml: true, bands: true });
-  const toggle = (k) => setShow((s) => ({ ...s, [k]: !s[k] }));
+  const [q, setQ] = useState("");
+  const mode = show.ml && show.ai ? "both" : show.ai ? "ai" : "ml";
+  const setMode = (m) => setShow((s) => ({ ...s, ml: m !== "ai", ai: m !== "ml" }));
 
   const loadMeta = useCallback(() => api.salesProducts().then(setMeta).catch((e) => notify(e.message, "error")), [notify]);
   useEffect(() => { loadMeta(); }, [loadMeta]);
@@ -1245,6 +1400,21 @@ function SalesForecastPage({ notify, vendor, onVendor }) {
     return shifted.length === 12 ? shifted.reduce((s, a) => s + a.units, 0) : null;
   }, [data]);
   const label = (m) => `${MODEL_LABEL[m]}${acc[m] ? ` (holdout error ${acc[m].wape_pct.toFixed(1)}%)` : ""}`;
+  // Key numbers for the active model (MLflow unless only ai_forecast is shown)
+  const activeModel = mode === "ai" ? "ai_forecast" : "mlflow_lightgbm";
+  const kpi = useMemo(() => {
+    if (!data) return null;
+    const rows = data.forecast.filter((f) => f.model === activeModel);
+    if (!rows.length) return null;
+    const tot = rows.reduce((s, f) => s + f.forecast_units, 0);
+    const peak = rows.reduce((a, b) => (b.forecast_units > a.forecast_units ? b : a));
+    const ai = data.forecast.filter((f) => f.model === "ai_forecast").reduce((s, f) => s + f.forecast_units, 0);
+    const ml = data.forecast.filter((f) => f.model === "mlflow_lightgbm").reduce((s, f) => s + f.forecast_units, 0);
+    return { tot, peak, gap: ml ? (ai / ml - 1) * 100 : null, vsLy: lastYear ? (tot / lastYear - 1) * 100 : null };
+  }, [data, activeModel, lastYear]);
+  const qn = q.trim().toLowerCase();
+  const matching = products.filter((p) => !qn || `${p.article_description} ${p.client_id} ${p.category}`.toLowerCase().includes(qn));
+  const byVendor = matching.reduce((m, p) => { (m[p.client_id] = m[p.client_id] || []).push(p); return m; }, {});
   const chips = current ? [
     { group: "Compare", questions: [`How does ${current.article_description} compare with other ${current.category} products in forecast growth vs last year?`] },
     { group: "Rank", questions: [`Which 5 ${current.client_id} products are forecast to grow most vs the same weeks last year?`] },
@@ -1252,7 +1422,7 @@ function SalesForecastPage({ notify, vendor, onVendor }) {
     { group: "Drill down", questions: [`Show the weekly forecast for ${current.article_description} next to actual sales in the same weeks last year`] },
   ] : [];
 
-  if (!meta) return <div className="panel"><div className="empty-state">Loading…</div></div>;
+  if (!meta) return <div className="panel"><Skeleton chart rows={2} /></div>;
   if (meta.error) {
     return <div className="panel"><div className="empty-state">{meta.error === "no_access"
       ? "The app can't read the sales forecast yet (it needs SELECT on gold.sales_forecast, gold.product_weekly_sales and gold.sales_forecast_accuracy)."
@@ -1260,27 +1430,65 @@ function SalesForecastPage({ notify, vendor, onVendor }) {
   }
   const vendors = [...new Set(meta.products.map((p) => p.client_id))].sort();
   return (
-    <div className="panel forecast">
-      <div className="toolbar">
-        <select value={vendor} onChange={(e) => onVendor(e.target.value)} title="Vendor">
-          <option value="">All vendors</option>
-          {vendors.map((v) => <option key={v} value={v}>{v}</option>)}
-        </select>
-        <select value={current?.product_key || ""} onChange={(e) => setProductKey(e.target.value)} title="Product" className="product-select">
-          {products.map((p) => <option key={p.product_key} value={p.product_key}>{p.article_description} ({p.client_id})</option>)}
-        </select>
-        <div className="model-toggles">
-          <label className="tg-ml"><input type="checkbox" checked={show.ml} onChange={() => toggle("ml")} /> MLflow model</label>
-          <label className="tg-ai"><input type="checkbox" checked={show.ai} onChange={() => toggle("ai")} /> ai_forecast</label>
-          <label><input type="checkbox" checked={show.bands} onChange={() => toggle("bands")} /> 90% ranges</label>
-        </div>
+    <div className="dash">
+      <div className="panel filter-bar">
+        <label className="fb-field"><span>Vendor</span>
+          <select value={vendor} onChange={(e) => onVendor(e.target.value)}>
+            <option value="">All vendors</option>
+            {vendors.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </label>
+        <label className="fb-field fb-search"><span>Find a product</span>
+          <div className="search-input"><Icon name="search" size={16} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, vendor or category" aria-label="Search products" />
+          </div>
+        </label>
+        <label className="fb-field fb-product"><span>Product</span>
+          <select value={current?.product_key || ""} onChange={(e) => setProductKey(e.target.value)} className="product-select">
+            {!matching.length && <option value="">No products match “{q}”</option>}
+            {Object.entries(byVendor).map(([v, ps]) => (
+              <optgroup key={v} label={v}>{ps.map((p) => <option key={p.product_key} value={p.product_key}>{p.article_description}</option>)}</optgroup>
+            ))}
+          </select>
+        </label>
         <span className="spacer" />
-        {latest && <span className="muted small"><span className={`badge run-${latest.status}`}>{latest.status}</span> {fmtTime(latest.started_at)}</span>}
-        <button className="primary" disabled={active} onClick={run}>{active ? "Forecast running…" : "Run forecast"}</button>
+        <div className="fb-run">
+          {latest && <span className="muted small"><span className={`badge run-${latest.status}`}>{latest.status}</span> {fmtTime(latest.started_at)}</span>}
+          <button className="primary" disabled={active} onClick={run}><Icon name="play" size={14} /> {active ? "Forecast running…" : "Run forecast"}</button>
+        </div>
       </div>
-      {!current ? <div className="empty-state">No products for this vendor.</div> : !data ? <div className="empty-state">Loading…</div> : (
+      {!current ? <div className="panel"><div className="empty-state">No products for this vendor.</div></div> : !data ? <div className="panel"><Skeleton chart rows={2} /></div> : (
         <>
-          <div className="muted small">{current.category} · GTIN {current.current_gtin} · weekly units sold, all stores (old + new GTIN combined)</div>
+          <div className="kpi-row">
+            <div className="kpi"><div className="kpi-label">Next 12 weeks</div>
+              <div className="kpi-value">{kpi ? Math.round(kpi.tot).toLocaleString() : "–"}<span className="kpi-unit"> units</span></div>
+              <div className="muted small">{MODEL_LABEL[activeModel]}</div></div>
+            <div className="kpi"><div className="kpi-label">vs same weeks last year</div>
+              <div className={`kpi-value ${kpi?.vsLy > 0 ? "pos" : kpi?.vsLy < 0 ? "neg" : ""}`}>
+                {kpi?.vsLy != null && <Icon name={kpi.vsLy >= 0 ? "up" : "down"} size={18} />}{kpi?.vsLy != null ? pct(kpi.vsLy) : "–"}</div>
+              <div className="muted small">{lastYear ? `${Math.round(lastYear).toLocaleString()} units a year earlier` : "not enough history"}</div></div>
+            <div className="kpi"><div className="kpi-label">Peak week</div>
+              <div className="kpi-value">{kpi ? kpi.peak.week : "–"}</div>
+              <div className="muted small">{kpi ? `${Math.round(kpi.peak.forecast_units).toLocaleString()} units forecast` : ""}</div></div>
+            <div className="kpi"><div className="kpi-label">Model agreement</div>
+              <div className="kpi-value">{kpi?.gap != null ? pct(kpi.gap) : "–"}</div>
+              <div className="muted small">ai_forecast vs MLflow, 12-week total</div></div>
+            <div className="kpi"><div className="kpi-label">Holdout error</div>
+              <div className="kpi-value">{acc[activeModel] ? `${acc[activeModel].wape_pct.toFixed(1)}%` : "–"}</div>
+              <div className="muted small">WAPE on the last 12 weeks, lower is better</div></div>
+          </div>
+          <div className="panel chart-card">
+            <div className="card-head">
+              <div>
+                <h3>{current.article_description}</h3>
+                <div className="muted small">{current.client_id} · {current.category} · GTIN {current.current_gtin} · weekly units, all stores (old + new GTIN combined)</div>
+              </div>
+              <div className="card-actions">
+                <Segmented label="Model" value={mode} onChange={setMode}
+                           options={[["ml", "MLflow"], ["ai", "ai_forecast"], ["both", "Both"]]} />
+                <label className="toggle"><input type="checkbox" checked={show.bands} onChange={() => setShow((s) => ({ ...s, bands: !s.bands }))} /> 90% ranges</label>
+              </div>
+            </div>
           <div className="chart">
             <ResponsiveContainer width="100%" height={400}>
               <ComposedChart data={series} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
@@ -1296,6 +1504,7 @@ function SalesForecastPage({ notify, vendor, onVendor }) {
                 {show.ai && <Line dataKey="ai" name={label("ai_forecast")} stroke="#ff3621" strokeDasharray="6 4" strokeWidth={2} dot={false} />}
               </ComposedChart>
             </ResponsiveContainer>
+          </div>
           </div>
           <div className="model-summary">
             {["mlflow_lightgbm", "ai_forecast"].map((m) => (
@@ -1348,7 +1557,7 @@ function ChangeoverPage({ notify, vendor, onVendor }) {
     api.changeoverWeekly(current.gtin_old).then((d) => setWeeks(d.weeks)).catch((e) => notify(e.message, "error"));
   }, [current?.gtin_old, notify]); // eslint-disable-line
 
-  if (!data) return <div className="panel"><div className="empty-state">Loading…</div></div>;
+  if (!data) return <div className="changeover-layout"><div className="panel"><Skeleton rows={6} /></div><div className="panel"><Skeleton chart rows={2} /></div></div>;
   if (data.error) {
     return (
       <div className="panel"><div className="empty-state">
@@ -1360,9 +1569,15 @@ function ChangeoverPage({ notify, vendor, onVendor }) {
   }
   const measured = list.filter((c) => c.status === "measured");
   const other = list.filter((c) => c.status !== "measured");
+  // One scale for every confidence bar, so effects can be compared at a glance
+  const allMeasured = data.changeovers.filter((c) => c.status === "measured" && c.ci_low != null);
+  const lo = Math.min(-5, ...allMeasured.map((c) => c.ci_low)), hi = Math.max(5, ...allMeasured.map((c) => c.ci_high));
+  const scale = { min: Math.floor(lo / 5) * 5, max: Math.ceil(hi / 5) * 5 };
   const item = (c) => (
-    <li key={c.gtin_old} className={current?.gtin_old === c.gtin_old ? "sel" : ""} onClick={() => setSelected(c.gtin_old)}>
+    <li key={c.gtin_old} className={`co-card ${current?.gtin_old === c.gtin_old ? "sel" : ""}`} onClick={() => setSelected(c.gtin_old)}
+        tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(c.gtin_old); } }}>
       <div className="co-row"><span className="co-name">{c.article_description}</span><EffectBadge c={c} /></div>
+      {c.status === "measured" && <ConfidenceBar effect={c.effect_pct} low={c.ci_low} high={c.ci_high} {...scale} />}
       <div className="muted small">{c.client_id} · {c.category} · switch {c.launch_date}{c.status === "measured" && c.controls_fit === false ? " · ⚠ check controls" : ""}</div>
     </li>
   );
@@ -1392,10 +1607,21 @@ function ChangeoverPage({ notify, vendor, onVendor }) {
               </div>
               <EffectBadge c={current} />
             </div>
+            {current.status === "measured" && (
+              <div className="effect-card">
+                <div className="ec-text">
+                  <div className="kpi-label">Effect of the change on weekly unit sales</div>
+                  <div className={`ec-value ${current.significant ? (current.effect_pct > 0 ? "pos" : "neg") : ""}`}>{pct(current.effect_pct)}</div>
+                  <div className="muted small">{current.significant
+                    ? `Clear effect: the 95% range (${pct(current.ci_low)} to ${pct(current.ci_high)}) doesn't include 0.`
+                    : `No clear effect: the 95% range (${pct(current.ci_low)} to ${pct(current.ci_high)}) includes 0.`}</div>
+                </div>
+                <div className="ec-bar"><ConfidenceBar big effect={current.effect_pct} low={current.ci_low} high={current.ci_high} {...scale} />
+                  <div className="muted small">Dot = estimate, bar = 95% range, line = no change. Same scale as the list.</div></div>
+              </div>
+            )}
             {current.status === "measured" ? (
               <div className="kpis">
-                <div className="kpi"><div className="kpi-label">Effect on weekly units</div><div className="kpi-value">{pct(current.effect_pct)}</div>
-                  <div className="muted small">95% range {pct(current.ci_low)} to {pct(current.ci_high)}{current.significant ? "" : " · no clear effect"}</div></div>
                 <div className="kpi"><div className="kpi-label">Units per week</div><div className="kpi-value">{Math.round(current.units_per_week_pre)} → {Math.round(current.units_per_week_post)}</div>
                   <div className="muted small">raw before vs after (includes seasonality)</div></div>
                 <div className="kpi"><div className="kpi-label">Transition dip</div><div className="kpi-value">{pct(current.transition_dip_pct)}</div>
@@ -1417,7 +1643,7 @@ function ChangeoverPage({ notify, vendor, onVendor }) {
               <div className="co-warn">⚠ Before the switch this product was already drifting away from its controls (trend p = {current.pretrend_p?.toFixed(2)}), so treat the effect with extra caution.</div>
             )}
             <div className="chart">
-              {!weeks ? <div className="empty-state">Loading chart…</div> : (
+              {!weeks ? <Skeleton chart={false} rows={4} /> : (
                 <ResponsiveContainer width="100%" height={340}>
                   <ComposedChart data={weeks} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -1603,20 +1829,16 @@ export default function App() {
   const [vendor, setVendor] = useStoredState("plf.vendor", "");
   const [collapsed, setCollapsed] = useStoredState("plf.uploads.collapsed", false);
   const [showArch, setShowArch] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useStoredState("plf.nav.collapsed", false);
+  const narrow = useMediaQuery("(max-width: 900px)");  // small screens always use the icon rail
 
   return (
-    <div className="app">
-      <header>
-        <h1>Product Launch Forecast</h1>
-        <nav aria-label="Main">
-          {[["review", "Upload & review"], ["check", "Ingestion check"], ["forecast", "Forecast"], ["impact", "Changeover impact"]].map(([k, label]) => (
-            <button key={k} className={tab === k ? "on" : ""} aria-current={tab === k ? "page" : undefined} onClick={() => setTab(k)}>{label}</button>
-          ))}
-        </nav>
-        <button className="arch-btn" onClick={() => setShowArch(true)} title="Architecture, Databricks components and data flow">Architecture</button>
-        <span className="user">{me?.email}</span>
-      </header>
+    <div className="app shell">
+      <Sidebar tab={tab} onTab={setTab} collapsed={navCollapsed || narrow} onToggle={() => setNavCollapsed((c) => !c)}
+               onArchitecture={() => setShowArch(true)} email={me?.email} />
       {showArch && <ArchitectureView onClose={() => setShowArch(false)} />}
+      <div className="main-col">
+      <PageHeader page={tab} />
       <main>
         {tab === "review" ? (
           <div className={`review-layout ${collapsed ? "collapsed" : ""}`}>
@@ -1635,6 +1857,7 @@ export default function App() {
           <SalesForecastPage notify={notify} vendor={vendor} onVendor={setVendor} />
         )}
       </main>
+      </div>
       <Toasts items={toasts} onClose={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
   );
