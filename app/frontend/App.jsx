@@ -268,6 +268,120 @@ function ReviewGrid({ uploadId, notify }) {
   );
 }
 
+// ------------------------------------------------------------------ ingestion check
+const FIELD_LABELS = Object.fromEntries(COLUMNS.map((c) => [c.key, c.label]));
+
+function DocumentPreview({ uploadId, upload }) {
+  const url = api.fileUrl(uploadId);
+  if (upload.preview === "pdf") {
+    return <iframe className="doc-frame" title={upload.file_name} src={url} />;
+  }
+  if (upload.preview === "image") {
+    return <div className="doc-image"><img src={url} alt={upload.file_name} /></div>;
+  }
+  return (
+    <div className="empty-state">
+      This file type can't be shown in the browser.<br />
+      <a href={url} download>Download {upload.file_name}</a> to compare it with the extracted fields.
+    </div>
+  );
+}
+
+function FieldCard({ product }) {
+  const issues = product.fields.filter((f) => f.status !== "ok").length;
+  return (
+    <div className={`field-card st-${product.status}`}>
+      <div className="field-card-head">
+        <strong>{product.article_description || "(no description)"}</strong>
+        <span className={`badge ${product.status}`}>{product.status}</span>
+        {issues > 0 && <span className="muted">{issues} field(s) with issues</span>}
+      </div>
+      <table className="field-table">
+        <thead>
+          <tr><th>Field</th><th>Extracted</th><th>Current</th><th>Check</th></tr>
+        </thead>
+        <tbody>
+          {product.fields.map((f) => (
+            <tr key={f.field} className={`chk-${f.status}`}>
+              <td className="fname-cell">{FIELD_LABELS[f.field] || f.field}</td>
+              <td className={f.extracted == null ? "missing" : ""}>{f.extracted ?? "(not found)"}</td>
+              <td className={f.edited ? "edited" : "muted"}>
+                {f.edited ? (f.current ?? "(cleared)") : "same"}
+              </td>
+              <td>
+                {f.status === "ok" ? <span className="ok">ok</span>
+                  : f.issues.map((i, n) => <div key={n} className={i.severity}>{i.message}</div>)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function IngestionCheck({ uploadId, onSelect, onReview, notify }) {
+  const [uploads, setUploads] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api.uploads().then((r) => {
+      setUploads(r.uploads);
+      if (!uploadId && r.uploads.length) onSelect(r.uploads[0].upload_id);
+    }).catch((e) => notify(e.message, "error"));
+  }, []); // eslint-disable-line
+
+  useEffect(() => {
+    if (!uploadId) return;
+    setLoading(true);
+    setData(null);
+    api.fields(uploadId).then(setData).catch((e) => notify(e.message, "error")).finally(() => setLoading(false));
+  }, [uploadId, notify]);
+
+  const s = data?.summary;
+  const u = data?.upload;
+  return (
+    <div className="panel ingestion">
+      <div className="toolbar">
+        <label>Upload&nbsp;
+          <select value={uploadId || ""} onChange={(e) => onSelect(e.target.value)}>
+            {!uploadId && <option value="">Select an upload</option>}
+            {uploads.map((x) => (
+              <option key={x.upload_id} value={x.upload_id}>{x.file_name} · {fmtTime(x.uploaded_at)} · {x.status}</option>
+            ))}
+          </select>
+        </label>
+        <span className="spacer" />
+        <button disabled={!uploadId} onClick={onReview}>Review in grid</button>
+      </div>
+      {!uploadId ? <div className="empty-state">No uploads yet.</div>
+        : loading || !data ? <div className="empty-state">Loading…</div> : (
+        <>
+          <div className="ingest-summary">
+            <span><span className={`badge ${u.status}`}>{u.status}</span> {u.file_name}</span>
+            <span className="muted">by {u.uploaded_by} · uploaded {fmtTime(u.uploaded_at)} · extracted {fmtTime(u.extracted_at) || "–"}</span>
+            <span className="stat"><b>{s.products}</b> products</span>
+            <span className="stat"><b>{s.fields_filled}</b>/{s.fields_expected} fields filled</span>
+            <span className={`stat ${s.fields_with_errors ? "bad" : ""}`}><b>{s.fields_with_errors}</b> errors</span>
+            <span className={`stat ${s.fields_with_warnings ? "warn" : ""}`}><b>{s.fields_with_warnings}</b> warnings</span>
+            <span className="stat"><b>{s.fields_edited}</b> edited</span>
+            {u.error && <div className="err full">{u.error}</div>}
+          </div>
+          <div className="ingest-split">
+            <div className="ingest-doc"><DocumentPreview uploadId={uploadId} upload={u} /></div>
+            <div className="ingest-fields">
+              {data.products.length
+                ? data.products.map((p) => <FieldCard key={p.product_id} product={p} />)
+                : <div className="empty-state">No products were extracted from this document.</div>}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ forecast
 function ForecastPage({ notify }) {
   const [client, setClient] = useState("");
@@ -392,6 +506,7 @@ export default function App() {
         <h1>Product Launch Forecast</h1>
         <nav>
           <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>Upload &amp; review</button>
+          <button className={tab === "check" ? "on" : ""} onClick={() => setTab("check")}>Ingestion check</button>
           <button className={tab === "forecast" ? "on" : ""} onClick={() => setTab("forecast")}>Forecast</button>
         </nav>
         <span className="user">{me?.email}</span>
@@ -402,6 +517,8 @@ export default function App() {
             <UploadPanel selected={uploadId} onSelect={setUploadId} notify={notify} />
             <ReviewGrid uploadId={uploadId} notify={notify} />
           </div>
+        ) : tab === "check" ? (
+          <IngestionCheck uploadId={uploadId} onSelect={setUploadId} onReview={() => setTab("review")} notify={notify} />
         ) : (
           <ForecastPage notify={notify} />
         )}

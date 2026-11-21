@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
@@ -257,6 +257,122 @@ def upload_products(upload_id: uuid.UUID):
         )
         rows = cur.fetchall()
         return {"products": [_with_validation(cur, r, keys) for r in rows]}
+
+
+# --------------------------------------------------------------------------- API: ingestion check
+
+# Only these types are rendered inline by the browser; everything else is a download
+_INLINE_TYPES = {
+    ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg", ".tif": "image/tiff", ".tiff": "image/tiff",
+}
+
+
+@app.get("/api/uploads/{upload_id}/file")
+def upload_file(upload_id: uuid.UUID):
+    """Serve the original uploaded document. The path comes from the uploads row, never from the client."""
+    with cursor() as cur:
+        cur.execute(f"SELECT file_name, volume_path FROM {S}.uploads WHERE upload_id=%s", (upload_id,))
+        row = cur.fetchone()
+    if not row or not row["volume_path"].startswith(config.UPLOAD_ROOT + "/"):
+        raise HTTPException(404, "Upload not found")
+    path = row["volume_path"]
+    try:
+        resp = w.files.download(path)
+    except Exception as exc:
+        log.warning("Could not download %s: %s", path, exc)
+        raise HTTPException(404, "File not found in the volume")
+    if resp.content_length and resp.content_length > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File is larger than 50 MB")
+    data = resp.contents.read(config.MAX_UPLOAD_BYTES + 1)
+    if len(data) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File is larger than 50 MB")
+    media = _INLINE_TYPES.get(os.path.splitext(path)[1].lower())
+    disposition = "inline" if media else "attachment"
+    return Response(
+        content=data,
+        media_type=media or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{_safe_file_name(row["file_name"])}"',
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, max-age=300",
+        },
+    )
+
+
+def _as_text(v):
+    if v is None:
+        return None
+    return v.isoformat() if isinstance(v, (date, datetime)) else str(v)
+
+
+@app.get("/api/uploads/{upload_id}/fields")
+def upload_fields(upload_id: uuid.UUID):
+    """Per product and field: value as extracted, current value, whether it was edited, validation issues."""
+    keys = published_keys()
+    with cursor() as cur:
+        cur.execute(
+            f"""SELECT upload_id, file_name, volume_path, status, error, uploaded_by, uploaded_at, extracted_at
+                FROM {S}.uploads WHERE upload_id=%s""",
+            (upload_id,),
+        )
+        upload = cur.fetchone()
+        if not upload:
+            raise HTTPException(404, "Upload not found")
+        cur.execute(
+            f"SELECT * FROM {S}.review_products WHERE upload_id=%s ORDER BY article_description NULLS LAST, product_id",
+            (upload_id,),
+        )
+        rows = [_with_validation(cur, r, keys) for r in cur.fetchall()]
+        first_old: dict = {}
+        if rows:
+            # The first audit entry per field holds the value before any human edit, i.e. as extracted
+            cur.execute(
+                f"""SELECT DISTINCT ON (product_id, field) product_id, field, old_value
+                    FROM {S}.review_audit
+                    WHERE product_id = ANY(%s) AND field <> 'status'
+                    ORDER BY product_id, field, changed_at, audit_id""",
+                ([r["product_id"] for r in rows],),
+            )
+            first_old = {(a["product_id"], a["field"]): a["old_value"] for a in cur.fetchall()}
+
+    products, filled, with_errors, with_warnings, edited_count = [], 0, 0, 0, 0
+    for r in rows:
+        fields = []
+        for f in EDITABLE_FIELDS:
+            current = _as_text(r.get(f))
+            edited = (r["product_id"], f) in first_old
+            if edited:
+                extracted = first_old[(r["product_id"], f)]
+            elif f == "launch_date" and r.get("launch_date_raw"):
+                extracted = r["launch_date_raw"]  # raw text, e.g. '15.02.2027' or 'KW 12'
+            else:
+                extracted = current
+            issues = [i for i in r["validation_errors"] if i["field"] == f]
+            status = "error" if any(i["severity"] == "error" for i in issues) else "warning" if issues else "ok"
+            filled += current is not None
+            with_errors += status == "error"
+            with_warnings += status == "warning"
+            edited_count += edited
+            fields.append({"field": f, "extracted": extracted, "current": current, "edited": edited,
+                           "status": status, "issues": issues})
+        products.append({"product_id": r["product_id"], "status": r["status"], "version": r["version"],
+                         "article_description": r["article_description"], "fields": fields})
+
+    ext = os.path.splitext(upload["volume_path"])[1].lower()
+    return {
+        "upload": {**{k: v for k, v in upload.items() if k != "volume_path"}, "preview": "image" if ext in (".png", ".jpg", ".jpeg") else
+                   "pdf" if ext == ".pdf" else "tiff" if ext in (".tif", ".tiff") else "download"},
+        "summary": {
+            "products": len(products),
+            "fields_expected": len(products) * len(EDITABLE_FIELDS),
+            "fields_filled": filled,
+            "fields_with_errors": with_errors,
+            "fields_with_warnings": with_warnings,
+            "fields_edited": edited_count,
+        },
+        "products": products,
+    }
 
 
 # --------------------------------------------------------------------------- API: review edits
