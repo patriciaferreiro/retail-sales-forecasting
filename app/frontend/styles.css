@@ -227,6 +227,16 @@ a.arch-node:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); }
   .arch-row { grid-template-columns: minmax(0, 1fr); }
   .arch-note { grid-column: 1; }
 }
+/* Forecast model comparison */
+.model-toggles { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.model-toggles label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.tg-ai { color: #c2410c; font-weight: 600; }
+.tg-ml { color: #6d28d9; font-weight: 600; }
+.model-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; margin-top: 8px; }
+.ms-card { border: 1px solid #e0e4e8; border-left: 5px solid; border-radius: 6px; padding: 8px 12px; font-size: 13px; }
+.ms-card.ms-ai { border-left-color: #ff3621; }
+.ms-card.ms-ml { border-left-color: #7c3aed; }
+.ms-card .muted { margin-top: 2px; }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 30; }
 .toast { padding: 10px 14px; border-radius: 6px; color: #fff; background: #1b3139; max-width: 420px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 .toast.ok { background: #166534; }

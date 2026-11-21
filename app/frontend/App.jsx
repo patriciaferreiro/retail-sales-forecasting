@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  Area, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { api } from "./api.js";
 
@@ -893,6 +893,8 @@ function ForecastPage({ notify }) {
   const [data, setData] = useState(null);
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [show, setShow] = useStoredState("plf.forecast.show", { ai: true, ml: true, bands: true });
+  const toggle = (k) => setShow((s) => ({ ...s, [k]: !s[k] }));
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -934,17 +936,22 @@ function ForecastPage({ notify }) {
   const series = useMemo(() => {
     if (!data) return [];
     const byDs = new Map();
-    for (const a of data.actuals) byDs.set(a.ds, { ds: a.ds, actual: a.actual });
-    const lastActual = data.actuals.length ? data.actuals[data.actuals.length - 1] : null;
-    if (lastActual) byDs.get(lastActual.ds).forecast = lastActual.actual; // bridge point
-    for (const f of data.forecast) {
-      const p = byDs.get(f.ds) || { ds: f.ds };
-      p.forecast = f.metric_forecast;
-      p.band = [f.metric_lower, f.metric_upper];
-      byDs.set(f.ds, p);
-    }
+    const at = (ds) => { if (!byDs.has(ds)) byDs.set(ds, { ds }); return byDs.get(ds); };
+    for (const a of data.actuals) at(a.ds).actual = a.actual;
+    const last = data.actuals.length ? data.actuals[data.actuals.length - 1] : null;
+    if (last) Object.assign(at(last.ds), { forecast: last.actual, forecast_ml: last.actual }); // bridge both lines to the last actual
+    for (const f of data.forecast) Object.assign(at(f.ds), { forecast: f.metric_forecast, band: [f.metric_lower, f.metric_upper] });
+    for (const f of data.forecast_ml || []) Object.assign(at(f.ds), { forecast_ml: f.metric_forecast, band_ml: [f.metric_lower, f.metric_upper] });
+    for (const s of data.scheduled || []) at(s.ds).scheduled = s.scheduled;
     return [...byDs.values()].sort((a, b) => a.ds.localeCompare(b.ds));
   }, [data]);
+
+  const acc = data?.accuracy || {};
+  const label = (name, a) => (a?.mase != null ? `${name} (holdout MASE ${a.mase.toFixed(2)})` : name);
+  const fmt = (v) => (Array.isArray(v) ? `${v[0].toFixed(1)} – ${v[1].toFixed(1)}` : typeof v === "number" ? v.toFixed(1) : v);
+  // Average forecast per model over the 12 weeks, for the summary under the chart
+  const avg = (rows) => (rows?.length ? rows.reduce((s, r) => s + r.metric_forecast, 0) / rows.length : null);
+  const avgAi = avg(data?.forecast), avgMl = avg(data?.forecast_ml);
 
   return (
     <div className="panel forecast">
@@ -954,6 +961,11 @@ function ForecastPage({ notify }) {
             {(data?.clients || []).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </label>
+        <div className="model-toggles">
+          <label className="tg-ai"><input type="checkbox" checked={show.ai} onChange={() => toggle("ai")} /> ai_forecast</label>
+          <label className="tg-ml"><input type="checkbox" checked={show.ml} onChange={() => toggle("ml")} /> MLflow model</label>
+          <label><input type="checkbox" checked={show.bands} onChange={() => toggle("bands")} /> 90% ranges</label>
+        </div>
         <span className="spacer" />
         {latest && (
           <span className="muted">
@@ -973,17 +985,31 @@ function ForecastPage({ notify }) {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="ds" />
                 <YAxis allowDecimals={false} label={{ value: "Launches / week", angle: -90, position: "insideLeft" }} />
-                <Tooltip />
+                <Tooltip formatter={fmt} />
                 <Legend />
-                <Area dataKey="band" name="90% interval" fill="#c7d7f5" stroke="none" />
+                {data.cutoff && <ReferenceLine x={data.cutoff} stroke="#8a99a0" strokeDasharray="3 3" label={{ value: "cutoff", fontSize: 11, fill: "#5a6f77" }} />}
+                {show.ai && show.bands && <Area dataKey="band" name="ai_forecast 90% range" fill="#ff3621" fillOpacity={0.12} stroke="none" />}
+                {show.ml && show.bands && <Area dataKey="band_ml" name="MLflow 90% range" fill="#7c3aed" fillOpacity={0.12} stroke="none" />}
                 <Line dataKey="actual" name="Actual" stroke="#1b3139" strokeWidth={2} dot />
-                <Line dataKey="forecast" name="Forecast" stroke="#ff3621" strokeDasharray="6 4" strokeWidth={2} dot={false} />
+                {show.ai && <Line dataKey="forecast" name={label("ai_forecast", acc.ai_forecast)} stroke="#ff3621" strokeDasharray="6 4" strokeWidth={2} dot={false} />}
+                {show.ml && <Line dataKey="forecast_ml" name={label("MLflow LightGBM", acc.mlflow)} stroke="#7c3aed" strokeDasharray="2 3" strokeWidth={2} dot={false} />}
+                <Scatter dataKey="scheduled" name="Scheduled (announced)" fill="#16a34a" shape="diamond" />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <div className="muted small">
-            Forecast generated {fmtTime(data.generated_at)} · served from {data.source}
+          <div className="model-summary">
+            <div className="ms-card ms-ai">
+              <b>ai_forecast</b> (Databricks SQL AI function)
+              <div>12-week average: {avgAi != null ? `${avgAi.toFixed(1)} launches/week` : "–"}</div>
+              <div className="muted">Holdout MASE {acc.ai_forecast?.mase?.toFixed(2) ?? "–"} · 90% range coverage {acc.ai_forecast?.coverage != null ? `${Math.round(acc.ai_forecast.coverage * 100)}%` : "–"} · generated {fmtTime(data.generated_at)} · served from {data.source}</div>
+            </div>
+            <div className="ms-card ms-ml">
+              <b>MLflow LightGBM</b> (global model, retrained each run)
+              <div>12-week average: {avgMl != null ? `${avgMl.toFixed(1)} launches/week` : "not run yet"}</div>
+              <div className="muted">Holdout MASE {acc.mlflow?.mase?.toFixed(2) ?? "–"} · 90% range coverage {acc.mlflow?.coverage != null ? `${Math.round(acc.mlflow.coverage * 100)}%` : "–"} · generated {fmtTime(data.ml_generated_at)}{data.ml_run_id ? ` · MLflow run ${data.ml_run_id.slice(0, 8)}` : ""}</div>
+            </div>
           </div>
+          <div className="muted small">MASE below 1 beats a naive last-week forecast; lower is better. History is synthetic test data.</div>
         </>
       )}
     </div>

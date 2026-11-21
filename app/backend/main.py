@@ -999,6 +999,42 @@ def _actual_rows() -> list[dict]:
     return [{"client_id": r["client_id"], "ds": str(r["ds"])[:10], "actual": int(r["n_launches"])} for r in rows]
 
 
+def _ml_forecast_rows() -> list[dict]:
+    """Forecast of the MLflow LightGBM model (written by the forecast_mlflow job task)."""
+    try:
+        rows = run_sql(
+            f"SELECT client_id, CAST(ds AS STRING) AS ds, metric_forecast, metric_lower, metric_upper, method, mlflow_run_id, "
+            f"CAST(forecast_generated_at AS STRING) AS forecast_generated_at FROM {config.MLFLOW_FORECAST_TABLE} ORDER BY client_id, ds"
+        )
+    except SqlError as exc:  # missing table or no access: show the ai_forecast chart without the second model
+        log.warning("MLflow forecast unavailable: %s", exc)
+        return []
+    for r in rows:
+        for k in ("metric_forecast", "metric_lower", "metric_upper"):
+            r[k] = float(r[k]) if r[k] is not None else None
+    return rows
+
+
+def _accuracy_rows() -> dict:
+    """Holdout accuracy per method from the latest backtest (forecast_exploration notebook)."""
+    try:
+        rows = run_sql(
+            f"""SELECT method, AVG(mase) AS mase, AVG(mae) AS mae, AVG(coverage) AS coverage, MAX(CAST(evaluated_at AS STRING)) AS evaluated_at
+                FROM {config.ACCURACY_TABLE} WHERE fold = 'holdout' GROUP BY method"""
+        )
+    except SqlError as exc:  # missing table or no access: the chart works without accuracy labels
+        log.warning("Forecast accuracy unavailable: %s", exc)
+        return {}
+    return {r["method"]: {k: (float(r[k]) if r[k] is not None else None) for k in ("mase", "mae", "coverage")}
+            | {"evaluated_at": r["evaluated_at"]} for r in rows}
+
+
+def _forecast_cutoff() -> date:
+    """Last complete Monday-week, the same cutoff the forecast tasks use."""
+    today = date.today()
+    return date.fromordinal(today.toordinal() - today.weekday() - 7)
+
+
 def _cached(key: str, fn, ttl: int = 120):
     hit = _forecast_cache.get(key)
     if hit and time.time() - hit[0] < ttl:
@@ -1011,13 +1047,25 @@ def _cached(key: str, fn, ttl: int = 120):
 @app.get("/api/forecast")
 def forecast(client_id: str | None = None):
     fc, source = _cached("forecast", _forecast_rows)
-    actuals = _cached("actuals", _actual_rows)
-    clients = sorted({r["client_id"] for r in fc + actuals if r.get("client_id")})
+    ml = _cached("forecast_ml", _ml_forecast_rows)
+    weekly = _cached("actuals", _actual_rows)
+    accuracy = _cached("accuracy", _accuracy_rows, ttl=600)
+    cutoff = _forecast_cutoff().isoformat()
+    # History up to the cutoff; weeks after it are announced (scheduled) launches, not actuals
+    actuals = [r for r in weekly if r["ds"] <= cutoff]
+    scheduled = [{"client_id": r["client_id"], "ds": r["ds"], "scheduled": r["actual"]} for r in weekly if r["ds"] > cutoff]
+    clients = sorted({r["client_id"] for r in fc + ml + weekly if r.get("client_id")})
     if client_id:
         fc = [r for r in fc if r["client_id"] == client_id]
+        ml = [r for r in ml if r["client_id"] == client_id]
         actuals = [r for r in actuals if r["client_id"] == client_id]
+        scheduled = [r for r in scheduled if r["client_id"] == client_id]
     generated = max((str(r["forecast_generated_at"]) for r in fc if r.get("forecast_generated_at")), default=None)
-    return {"clients": clients, "actuals": actuals, "forecast": fc, "source": source, "generated_at": generated}
+    ml_generated = max((str(r["forecast_generated_at"]) for r in ml if r.get("forecast_generated_at")), default=None)
+    return {"clients": clients, "cutoff": cutoff, "actuals": actuals, "scheduled": scheduled,
+            "forecast": fc, "source": source, "generated_at": generated,
+            "forecast_ml": ml, "ml_generated_at": ml_generated, "ml_run_id": next((r["mlflow_run_id"] for r in ml), None),
+            "accuracy": {"ai_forecast": accuracy.get("ai_forecast_current"), "mlflow": accuracy.get("lightgbm_global")}}
 
 
 # --------------------------------------------------------------------------- utils + static
