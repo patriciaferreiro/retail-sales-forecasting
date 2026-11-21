@@ -47,6 +47,11 @@ resources:
             branch: ${resources.postgres_projects.app_db.name}/branches/production
             database: ${resources.postgres_projects.app_db.name}/branches/production/databases/databricks-postgres
             permission: CAN_CONNECT_AND_CREATE
+        # LLM used for AI fix suggestions in the review panel
+        - name: llm
+          serving_endpoint:
+            name: databricks-claude-sonnet-4-6
+            permission: CAN_QUERY
         - name: raw-documents
           uc_securable:
             securable_full_name: ${var.catalog}.bronze.raw_documents

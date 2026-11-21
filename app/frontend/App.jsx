@@ -318,7 +318,7 @@ function ProductPanel({ productId, onClose, onNavigate, onChanged, notify, rende
                     {d.fields.map((f) => (
                       <FieldRow key={f.field} f={f} version={d.product.version} onSave={save}
                                 selected={sel?.field === f.field} onSelect={select}
-                                extra={renderFieldExtra?.(d, f, load, setSel)} />
+                                extra={renderFieldExtra?.(d, f, load, select)} />
                     ))}
                   </tbody>
                 </table>
@@ -329,6 +329,114 @@ function ProductPanel({ productId, onClose, onNavigate, onChanged, notify, rende
       </div>
     </div>
   );
+}
+
+// ------------------------------------------------------------------ AI suggestions
+function SuggestionCard({ s, stale, onApply, onDismiss, onShowEvidence, busy }) {
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+  return (
+    <div className={`ai-card ${s.still_invalid ? "bad" : ""}`} onClick={(e) => e.stopPropagation()}>
+      <div className="ai-card-head">
+        <span className="ai-tag">AI</span>
+        {s.action === "change" && <span>Suggested: <b>{s.suggested_value}</b></span>}
+        {s.action === "clear" && <span>Suggested: <b>clear the value</b></span>}
+        {s.action === "no_change" && <span><b>No change suggested</b></span>}
+        <span className={`conf conf-${s.confidence}`}>{s.confidence} confidence</span>
+      </div>
+      {s.reason && <div className="ai-reason">{s.reason}</div>}
+      {s.evidence_quote && (
+        <div className="ai-evidence">
+          “{s.evidence_quote}”{" "}
+          {s.evidence_found
+            ? <button className="link" onClick={stop(onShowEvidence)}>Show in document</button>
+            : <span className="warn-text">quote not found in the document text</span>}
+        </div>
+      )}
+      {s.still_invalid && (
+        <div className="warn-text">Would still fail: {(s.validation_messages || []).map((m) => m.message).join("; ")}</div>
+      )}
+      {s.action === "change" && s.value_in_document === false && (
+        <div className="warn-text">This value doesn't appear in the document. Confirm it with the client.</div>
+      )}
+      {stale && <div className="muted">Based on an older version of this product.</div>}
+      <div className="ai-actions">
+        <button className="primary" disabled={busy || s.action === "no_change"} onClick={stop(onApply)}>Apply</button>
+        <button disabled={busy} onClick={stop(onDismiss)}>Dismiss</button>
+      </div>
+    </div>
+  );
+}
+
+function AiProductPanel(props) {
+  const { productId, notify, onChanged } = props;
+  const [sugs, setSugs] = useState([]);
+  const [note, setNote] = useState(null);
+  const [busy, setBusy] = useState(null); // field name, "__all", or "__decide"
+
+  const loadSugs = useCallback(async () => {
+    try { setSugs((await api.suggestions(productId)).suggestions); } catch { /* panel still works */ }
+  }, [productId]);
+  useEffect(() => { setSugs([]); setNote(null); loadSugs(); }, [productId]); // eslint-disable-line
+
+  async function ask(field) {
+    setBusy(field ?? "__all");
+    try {
+      const r = await api.suggest(productId, field);
+      setNote(r.product_note || null);
+      if (!r.suggestions.length) notify("The AI returned no suggestion for this field", "warn");
+      await loadSugs();
+    } catch (e) { notify(`AI suggestion failed: ${e.message}`, "error"); } finally { setBusy(null); }
+  }
+  async function apply(s, d, reload) {
+    setBusy("__decide");
+    try {
+      await api.applySuggestion(s.suggestion_id, d.product.version);
+      notify(`Applied AI suggestion to ${LABELS[s.field] || s.field}`, "ok");
+      await reload(); await loadSugs(); onChanged?.();
+    } catch (e) {
+      notify(e.status === 409 ? `${e.detail?.message || e.message}. Reloaded.` : `Apply failed: ${e.message}`, e.status === 409 ? "warn" : "error");
+      await reload(); await loadSugs();
+    } finally { setBusy(null); }
+  }
+  async function dismiss(s) {
+    setBusy("__decide");
+    try { await api.dismissSuggestion(s.suggestion_id); await loadSugs(); }
+    catch (e) { notify(e.message, "error"); } finally { setBusy(null); }
+  }
+
+  const header = (d) => {
+    const errs = d.fields.filter((f) => f.status === "error").length;
+    return (
+      <>
+        {note && <span className="ai-note" title={note}>AI: {note}</span>}
+        {errs > 0 && d.product.status !== "published" && (
+          <button className="ai-btn" disabled={!!busy} onClick={() => ask(null)}>
+            {busy === "__all" ? "Asking AI…" : `Suggest fixes (${errs})`}
+          </button>
+        )}
+      </>
+    );
+  };
+  const extra = (d, f, reload, select) => {
+    const mine = sugs.filter((s) => s.field === f.field);
+    return (
+      <>
+        {f.status === "error" && d.product.status !== "published" && (
+          <div>
+            <button className="ai-btn small" disabled={!!busy} onClick={(e) => { e.stopPropagation(); ask(f.field); }}>
+              {busy === f.field ? "Asking AI…" : "AI suggestion"}
+            </button>
+          </div>
+        )}
+        {mine.map((s) => (
+          <SuggestionCard key={s.suggestion_id} s={s} busy={!!busy} stale={s.based_on_version !== d.product.version}
+                          onApply={() => apply(s, d, reload)} onDismiss={() => dismiss(s)}
+                          onShowEvidence={() => select({ field: f.field, current: s.evidence_quote, extracted: null })} />
+        ))}
+      </>
+    );
+  };
+  return <ProductPanel {...props} header={header} renderFieldExtra={extra} />;
 }
 
 function ReviewGrid({ uploadId, notify }) {
@@ -453,7 +561,7 @@ function ReviewGrid({ uploadId, notify }) {
         </div>
       )}
       {openId && (
-        <ProductPanel
+        <AiProductPanel
           productId={openId}
           onClose={() => setOpenId(null)}
           onNavigate={setOpenId}
