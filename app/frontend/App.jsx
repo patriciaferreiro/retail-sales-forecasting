@@ -1016,6 +1016,305 @@ function ForecastPage({ notify }) {
   );
 }
 
+// ------------------------------------------------------------------ Ask Genie panel
+function GenieAnswer({ m, onAsk }) {
+  const [showSql, setShowSql] = useState(false);
+  if (m.pending) return <div className="genie-msg genie-bot muted">Genie is thinking… (usually 10-20 seconds)</div>;
+  if (m.failed) return <div className="genie-msg genie-bot genie-err">{m.failed}</div>;
+  return (
+    <div className="genie-msg genie-bot">
+      {m.text && m.text.split("\n").filter(Boolean).map((line, i) => (
+        <p key={i} dangerouslySetInnerHTML={{ __html: line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>") }} />
+      ))}
+      {m.columns?.length > 0 && (
+        <div className="genie-table-wrap">
+          <table className="genie-table">
+            <thead><tr>{m.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+            <tbody>{m.rows.map((r, i) => <tr key={i}>{r.map((v, j) => <td key={j}>{v ?? "–"}</td>)}</tr>)}</tbody>
+          </table>
+          {m.truncated && <div className="muted small">Showing the first {m.rows.length} of {m.row_count} rows.</div>}
+        </div>
+      )}
+      {m.sql && (
+        <div className="small">
+          <button className="link" onClick={() => setShowSql((s) => !s)}>{showSql ? "Hide" : "Show"} the SQL Genie ran</button>
+          {showSql && <pre className="genie-sql">{m.sql}</pre>}
+        </div>
+      )}
+      {m.suggested_questions?.length > 0 && (
+        <div className="genie-suggest">{m.suggested_questions.map((q) => <button key={q} className="chip-btn" onClick={() => onAsk(q)}>{q}</button>)}</div>
+      )}
+    </div>
+  );
+}
+
+// Prominent Genie section below a chart: the analysis Genie already wrote, what you can ask, and an inline thread.
+function GenieInsights({ scope, itemKey, title, chips = [] }) {
+  const [state, setState] = useState(null);        // response of /api/genie/insight
+  const [messages, setMessages] = useState([]);
+  const [conversationId, setConversationId] = useState(null);
+  const [input, setInput] = useState("");
+  const busy = messages.some((m) => m.pending);
+  const threadEnd = useRef(null);
+
+  // Load the opening analysis; while Genie is still writing it, check again every 3 seconds
+  useEffect(() => {
+    if (!itemKey) return undefined;
+    let stop = false, timer = null;
+    setState(null); setMessages([]); setConversationId(null);
+    const load = async () => {
+      try {
+        const r = await api.genieInsight(scope, itemKey);
+        if (stop) return;
+        setState(r);
+        if (r.status === "generating" || r.status === "missing") timer = setTimeout(load, 3000);
+      } catch (e) {
+        if (!stop) setState({ status: "error", error: e.message });
+      }
+    };
+    load();
+    return () => { stop = true; clearTimeout(timer); };
+  }, [scope, itemKey]);
+  useEffect(() => { if (messages.length) threadEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [messages]);
+
+  async function refresh() {
+    try {
+      const r = await api.refreshInsight(scope, itemKey);
+      setState(r);
+      const poll = async () => {
+        const x = await api.genieInsight(scope, itemKey);
+        setState(x);
+        if (x.status === "generating") setTimeout(poll, 3000);
+      };
+      setTimeout(poll, 3000);
+    } catch (e) { setState((s) => ({ ...s, status: "error", error: e.message })); }
+  }
+
+  async function ask(q) {
+    const question = (q ?? input).trim();
+    if (!question || busy) return;
+    setInput("");
+    const id = Math.random().toString(36).slice(2);
+    setMessages((ms) => [...ms, { id: `${id}-q`, role: "user", text: question }, { id, role: "genie", pending: true }]);
+    try {
+      const r = await api.askGenie(question, conversationId);
+      setConversationId(r.conversation_id);
+      const failed = r.status === "FAILED" ? (r.error || "Genie could not answer this question.") : null;
+      setMessages((ms) => ms.map((m) => (m.id === id ? { id, role: "genie", ...r, failed } : m)));
+    } catch (e) {
+      setMessages((ms) => ms.map((m) => (m.id === id ? { id, role: "genie", failed: e.message } : m)));
+    }
+  }
+
+  const ins = state?.insight;
+  const analysis = ins && ins.text ? { text: ins.text, sql: ins.sql, columns: ins.columns, rows: ins.rows, row_count: ins.rows?.length || 0,
+                                       suggested_questions: [] } : null;
+  const generating = !state || state.status === "generating" || state.status === "missing";
+  const nextQuestions = [...new Set([...(ins?.suggested || [])])].slice(0, 3);
+
+  return (
+    <section className="genie-insights">
+      <div className="gi-head">
+        <div>
+          <h3>✨ Genie insights{title ? <span className="gi-title"> · {title}</span> : null}</h3>
+          <div className="muted small">Genie turns plain-language questions into SQL on the governed sales, forecast and changeover tables, and answers with live results.</div>
+        </div>
+        <span className="genie-badge">Powered by Databricks Genie</span>
+      </div>
+
+      <div className="gi-analysis">
+        <div className="gi-label">Genie's analysis</div>
+        {generating && !analysis && <div className="genie-msg genie-bot muted"><span className="gi-spinner" /> Genie is analyzing this {scope === "product" ? "product" : "changeover"}… (about 20-30 seconds)</div>}
+        {state?.status === "failed" && !analysis && <div className="genie-msg genie-bot genie-err">Genie couldn't finish this analysis: {ins?.error || "unknown error"}</div>}
+        {state?.status === "error" && <div className="genie-msg genie-bot genie-err">{state.error}</div>}
+        {analysis && <GenieAnswer m={analysis} onAsk={ask} />}
+        {analysis && (
+          <div className="muted small gi-meta">
+            {generating ? <><span className="gi-spinner" /> Updating with the latest data… · </> : null}
+            Written {fmtTime(ins.updated_at)}{!state?.current && !generating ? " · data has changed since" : ""} ·{" "}
+            <button className="link" onClick={refresh} disabled={generating}>Refresh analysis</button>
+          </div>
+        )}
+      </div>
+
+      <div className="gi-label">What you can ask Genie</div>
+      <div className="gi-chips">
+        {chips.map((g) => (
+          <div key={g.group} className="gi-chip-group">
+            <div className="gi-group">{g.group}</div>
+            {g.questions.map((q) => <button key={q} className="chip-btn" disabled={busy} onClick={() => ask(q)}>{q}</button>)}
+          </div>
+        ))}
+      </div>
+      {nextQuestions.length > 0 && messages.length === 0 && (
+        <div className="gi-next"><span className="gi-group">Genie suggests next</span>
+          {nextQuestions.map((q) => <button key={q} className="chip-btn" disabled={busy} onClick={() => ask(q)}>{q}</button>)}</div>
+      )}
+
+      <form className="gi-input" onSubmit={(e) => { e.preventDefault(); ask(); }}>
+        <input value={input} onChange={(e) => setInput(e.target.value)} disabled={busy} maxLength={2000}
+               placeholder={conversationId ? "Ask a follow-up… e.g. \"break that down by month\"" : `Ask anything about ${title || "sales, forecasts and changeovers"}…`} />
+        <button className="primary" disabled={busy || !input.trim()}>{busy ? "Genie is answering…" : "Ask Genie"}</button>
+      </form>
+
+      {messages.length > 0 && (
+        <div className="gi-thread">
+          {messages.map((m) => (m.role === "user"
+            ? <div key={m.id} className="genie-msg genie-user">{m.text}</div>
+            : <GenieAnswer key={m.id} m={m} onAsk={ask} />))}
+          <div ref={threadEnd} />
+          <button className="link small" onClick={() => { setMessages([]); setConversationId(null); }}>New conversation</button>
+        </div>
+      )}
+      <div className="muted small">Answers can be wrong; check the SQL for important decisions. Sales data is synthetic.</div>
+    </section>
+  );
+}
+
+// ------------------------------------------------------------------ sales forecast per product
+const MODEL_LABEL = { mlflow_lightgbm: "MLflow LightGBM", ai_forecast: "ai_forecast" };
+
+function SalesForecastPage({ notify, vendor, onVendor }) {
+  const [meta, setMeta] = useState(null);
+  const [productKey, setProductKey] = useStoredState("plf.sales.product", "");
+  const [data, setData] = useState(null);
+  const [runs, setRuns] = useState([]);
+  const [show, setShow] = useStoredState("plf.sales.show", { ai: true, ml: true, bands: true });
+  const toggle = (k) => setShow((s) => ({ ...s, [k]: !s[k] }));
+
+  const loadMeta = useCallback(() => api.salesProducts().then(setMeta).catch((e) => notify(e.message, "error")), [notify]);
+  useEffect(() => { loadMeta(); }, [loadMeta]);
+
+  const vKey = normVendor(vendor);
+  const products = useMemo(() => (meta?.products || []).filter((p) => !vKey || normVendor(p.client_id) === vKey), [meta, vKey]);
+  const current = products.find((p) => p.product_key === productKey) || products[0] || null;
+
+  const loadData = useCallback(() => {
+    if (!current) { setData(null); return; }
+    api.salesForecast(current.product_key).then(setData).catch((e) => notify(e.message, "error"));
+  }, [current?.product_key, notify]); // eslint-disable-line
+  useEffect(() => { setData(null); loadData(); }, [loadData]);
+
+  const latest = runs[0];
+  const active = latest && ACTIVE_RUN.includes(latest.status);
+  const loadRuns = useCallback(async () => {
+    try {
+      const { runs: rs } = await api.runs();
+      if (rs[0] && ACTIVE_RUN.includes(rs[0].status)) {
+        const fresh = await api.run(rs[0].run_id);
+        rs[0] = fresh;
+        if (fresh.status === "SUCCESS") { notify("Sales forecast finished", "ok"); loadMeta(); loadData(); }
+        else if (!ACTIVE_RUN.includes(fresh.status)) notify(`Forecast run ${fresh.status}: ${fresh.state_message || ""}`, "error");
+      }
+      setRuns(rs);
+    } catch (e) { notify(e.message, "error"); }
+  }, [notify, loadMeta, loadData]);
+  usePolling(loadRuns, active ? 5000 : 30000);
+
+  async function run() {
+    try {
+      const r = await api.runForecast();
+      notify(`Sales forecast run ${r.run_id} started`, "ok");
+      loadRuns();
+    } catch (e) {
+      notify(e.status === 409 ? "A forecast run is already in progress" : e.message, e.status === 409 ? "warn" : "error");
+      loadRuns();
+    }
+  }
+
+  const series = useMemo(() => {
+    if (!data) return [];
+    const byWeek = new Map();
+    const at = (wk) => { if (!byWeek.has(wk)) byWeek.set(wk, { week: wk }); return byWeek.get(wk); };
+    for (const a of data.actuals) at(a.week).actual = a.units;
+    const last = data.actuals[data.actuals.length - 1];
+    if (last) Object.assign(at(last.week), { ai: last.units, ml: last.units }); // bridge both lines to the last actual
+    for (const f of data.forecast) {
+      const k = f.model === "ai_forecast" ? "ai" : "ml";
+      Object.assign(at(f.week), { [k]: f.forecast_units, [`${k}_band`]: [f.lower_units, f.upper_units] });
+    }
+    return [...byWeek.values()].sort((a, b) => a.week.localeCompare(b.week));
+  }, [data]);
+
+  const acc = meta?.accuracy || {};
+  const total = (m) => (data ? data.forecast.filter((f) => f.model === m).reduce((s, f) => s + f.forecast_units, 0) : null);
+  const lastYear = useMemo(() => {
+    if (!data?.actuals.length) return null;
+    const weeks = new Set(data.forecast.map((f) => f.week));
+    const shifted = data.actuals.filter((a) => weeks.has(addWeeks(a.week, 52)));
+    return shifted.length === 12 ? shifted.reduce((s, a) => s + a.units, 0) : null;
+  }, [data]);
+  const label = (m) => `${MODEL_LABEL[m]}${acc[m] ? ` (holdout error ${acc[m].wape_pct.toFixed(1)}%)` : ""}`;
+  const chips = current ? [
+    { group: "Compare", questions: [`How does ${current.article_description} compare with other ${current.category} products in forecast growth vs last year?`] },
+    { group: "Rank", questions: [`Which 5 ${current.client_id} products are forecast to grow most vs the same weeks last year?`] },
+    { group: "Explain", questions: [`Why do mlflow_lightgbm and ai_forecast differ for ${current.article_description}, and which model was more accurate?`] },
+    { group: "Drill down", questions: [`Show the weekly forecast for ${current.article_description} next to actual sales in the same weeks last year`] },
+  ] : [];
+
+  if (!meta) return <div className="panel"><div className="empty-state">Loading…</div></div>;
+  if (meta.error) {
+    return <div className="panel"><div className="empty-state">{meta.error === "no_access"
+      ? "The app can't read the sales forecast yet (it needs SELECT on gold.sales_forecast, gold.product_weekly_sales and gold.sales_forecast_accuracy)."
+      : "No sales forecast yet. Click Run forecast."}</div></div>;
+  }
+  const vendors = [...new Set(meta.products.map((p) => p.client_id))].sort();
+  return (
+    <div className="panel forecast">
+      <div className="toolbar">
+        <select value={vendor} onChange={(e) => onVendor(e.target.value)} title="Vendor">
+          <option value="">All vendors</option>
+          {vendors.map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+        <select value={current?.product_key || ""} onChange={(e) => setProductKey(e.target.value)} title="Product" className="product-select">
+          {products.map((p) => <option key={p.product_key} value={p.product_key}>{p.article_description} ({p.client_id})</option>)}
+        </select>
+        <div className="model-toggles">
+          <label className="tg-ml"><input type="checkbox" checked={show.ml} onChange={() => toggle("ml")} /> MLflow model</label>
+          <label className="tg-ai"><input type="checkbox" checked={show.ai} onChange={() => toggle("ai")} /> ai_forecast</label>
+          <label><input type="checkbox" checked={show.bands} onChange={() => toggle("bands")} /> 90% ranges</label>
+        </div>
+        <span className="spacer" />
+        {latest && <span className="muted small"><span className={`badge run-${latest.status}`}>{latest.status}</span> {fmtTime(latest.started_at)}</span>}
+        <button className="primary" disabled={active} onClick={run}>{active ? "Forecast running…" : "Run forecast"}</button>
+      </div>
+      {!current ? <div className="empty-state">No products for this vendor.</div> : !data ? <div className="empty-state">Loading…</div> : (
+        <>
+          <div className="muted small">{current.category} · GTIN {current.current_gtin} · weekly units sold, all stores (old + new GTIN combined)</div>
+          <div className="chart">
+            <ResponsiveContainer width="100%" height={400}>
+              <ComposedChart data={series} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="week" />
+                <YAxis label={{ value: "Units / week", angle: -90, position: "insideLeft" }} />
+                <Tooltip formatter={(v) => (Array.isArray(v) ? `${Math.round(v[0])} – ${Math.round(v[1])}` : typeof v === "number" ? Math.round(v) : v)} />
+                <Legend />
+                {show.ml && show.bands && <Area dataKey="ml_band" name="MLflow 90% range" fill="#7c3aed" fillOpacity={0.12} stroke="none" />}
+                {show.ai && show.bands && <Area dataKey="ai_band" name="ai_forecast 90% range" fill="#ff3621" fillOpacity={0.12} stroke="none" />}
+                <Line dataKey="actual" name="Actual" stroke="#1b3139" strokeWidth={2} dot={false} />
+                {show.ml && <Line dataKey="ml" name={label("mlflow_lightgbm")} stroke="#7c3aed" strokeDasharray="2 3" strokeWidth={2} dot={false} />}
+                {show.ai && <Line dataKey="ai" name={label("ai_forecast")} stroke="#ff3621" strokeDasharray="6 4" strokeWidth={2} dot={false} />}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="model-summary">
+            {["mlflow_lightgbm", "ai_forecast"].map((m) => (
+              <div key={m} className={`ms-card ${m === "ai_forecast" ? "ms-ai" : "ms-ml"}`}>
+                <b>{MODEL_LABEL[m]}</b>{m === "mlflow_lightgbm" ? " (global model, retrained each run)" : " (Databricks SQL AI function)"}
+                <div>Next 12 weeks: {total(m) != null ? `${Math.round(total(m)).toLocaleString()} units` : "–"}
+                  {lastYear ? ` · ${pct((total(m) / lastYear - 1) * 100)} vs same weeks last year` : ""}</div>
+                <div className="muted">Holdout error (WAPE) {acc[m] ? `${acc[m].wape_pct.toFixed(1)}%` : "–"} · 90% range coverage {acc[m] ? `${Math.round(acc[m].coverage_pct)}%` : "–"} · bias {acc[m] ? pct(acc[m].bias_pct) : "–"}</div>
+              </div>
+            ))}
+          </div>
+          <div className="muted small">Holdout error = total absolute error when forecasting the last 12 weeks without seeing them (all products); lower is better. Sales are synthetic demo data.</div>
+          <GenieInsights scope="product" itemKey={current.product_key} title={current.article_description} chips={chips} />
+        </>
+      )}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ changeover impact
 const pct = (v, digits = 1) => (v == null ? "–" : `${v > 0 ? "+" : ""}${v.toFixed(digits)}%`);
 const addWeeks = (iso, n) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 7 * n); return d.toISOString().slice(0, 10); };
@@ -1143,6 +1442,14 @@ function ChangeoverPage({ notify, vendor, onVendor }) {
                 : `Shows the last 26 weeks. The switch is on ${current.launch_date}.`}
               {current.is_synthetic_data ? " Sales are synthetic demo data." : ""} Evaluated {fmtTime(current.evaluated_at)}.
             </div>
+            <GenieInsights scope="changeover" itemKey={current.gtin_old} title={current.article_description} chips={[
+              { group: "Compare", questions: [`How does the ${current.article_description} changeover compare with the other ${current.category} changeovers?`] },
+              { group: "Rank", questions: ["Rank all measured changeovers by their effect on weekly unit sales, with the 95% range"] },
+              { group: "Explain", questions: [current.status === "measured"
+                ? `How reliable is the estimated effect for ${current.article_description}, and what does controls_fit mean here?`
+                : "Which changeovers are still pending and when will their effect become measurable?"] },
+              { group: "Drill down", questions: [`Show weekly actual and expected units for ${current.article_description} around its changeover`] },
+            ]} />
           </>
         )}
       </div>
@@ -1326,7 +1633,7 @@ export default function App() {
         ) : tab === "impact" ? (
           <ChangeoverPage notify={notify} vendor={vendor} onVendor={setVendor} />
         ) : (
-          <ForecastPage notify={notify} />
+          <SalesForecastPage notify={notify} vendor={vendor} onVendor={setVendor} />
         )}
       </main>
       <Toasts items={toasts} onClose={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />

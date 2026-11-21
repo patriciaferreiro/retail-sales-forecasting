@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
-from . import config
+from . import config, insights
 from .db import S, cursor, init_db, w
 from .extraction import extract_file, parse_text
 from .suggestions import SERVING_ENDPOINT, ask_model
@@ -41,6 +41,7 @@ ACTIVE_RUN_STATES = ("QUEUED", "PENDING", "RUNNING", "BLOCKED", "WAITING_FOR_RET
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    insights.prewarm_in_background()  # prepare missing or stale Genie insights without delaying startup
     yield
 
 
@@ -904,6 +905,8 @@ def _refresh_run(cur, run_id: int) -> dict:
     )
     if status == "SUCCESS":
         _forecast_cache.clear()
+        insights.clear_cache()
+        insights.prewarm_in_background()  # new data version: regenerate the Genie insights
     return cur.fetchone()
 
 
@@ -1131,6 +1134,136 @@ def changeover_weekly(gtin_old: str):
 
 def normalize_vendor(s: str | None) -> str:
     return (s or "").strip().lower()
+
+
+# --------------------------------------------------------------------------- sales forecast per product
+
+def _sales_products() -> dict:
+    try:
+        rows = run_sql(
+            f"""SELECT product_key, MIN(client_id) AS client_id, MIN(article_description) AS article_description,
+                       MIN(category) AS category, MIN(current_gtin) AS current_gtin
+                FROM {config.SALES_FORECAST_VIEW} GROUP BY product_key ORDER BY client_id, article_description"""
+        )
+        acc = run_sql(
+            f"""SELECT model, wape_pct, mae_units, coverage_pct, bias_pct, CAST(holdout_start AS STRING) AS holdout_start,
+                       CAST(holdout_end AS STRING) AS holdout_end FROM {config.SALES_ACCURACY_TABLE}"""
+        )
+    except SqlError as exc:
+        log.warning("Sales forecast unavailable: %s", exc)
+        return {"products": [], "accuracy": {}, "error": "not_run" if _missing_table(exc) else "no_access"}
+    accuracy = {a["model"]: {k: (float(a[k]) if a[k] is not None and k.endswith(("pct", "units")) else a[k])
+                             for k in a if k != "model"} for a in acc}
+    return {"products": rows, "accuracy": accuracy, "error": None}
+
+
+@app.get("/api/sales-forecast/products")
+def sales_products():
+    return _cached("sales_products", _sales_products, ttl=300)
+
+
+@app.get("/api/sales-forecast/{product_key}")
+def sales_forecast(product_key: str):
+    if not product_key.isdigit() or len(product_key) > 14:
+        raise HTTPException(400, "product_key must be a numeric GTIN")
+    try:
+        actuals = run_sql(
+            f"""SELECT CAST(week AS STRING) AS week, units, revenue_eur, promo_share FROM {config.PRODUCT_WEEKLY_SALES_VIEW}
+                WHERE product_key = :p AND week > date_sub(current_date(), 7 * 60) ORDER BY week""",
+            {"p": product_key},
+        )
+        fc = run_sql(
+            f"""SELECT model, CAST(week AS STRING) AS week, forecast_units, lower_units, upper_units, CAST(generated_at AS STRING) AS generated_at
+                FROM {config.SALES_FORECAST_VIEW} WHERE product_key = :p ORDER BY model, week""",
+            {"p": product_key},
+        )
+    except SqlError as exc:
+        log.warning("Sales forecast unavailable: %s", exc)
+        raise HTTPException(503, "Sales forecast not available (not run yet or no access)")
+    for r in actuals:
+        r["units"] = float(r["units"]) if r["units"] is not None else None
+    for r in fc:
+        for k in ("forecast_units", "lower_units", "upper_units"):
+            r[k] = float(r[k]) if r[k] is not None else None
+    return {"product_key": product_key, "actuals": actuals, "forecast": fc}
+
+
+# --------------------------------------------------------------------------- Ask Genie
+
+class GenieAsk(BaseModel):
+    question: str
+    conversation_id: str | None = None
+
+
+@app.post("/api/genie/ask")
+def genie_ask(body: GenieAsk, request: Request):
+    """Ask the Genie space a question (or a follow-up in the same conversation). Runs as the app service principal."""
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(400, "Question is empty")
+    if len(question) > 2000:
+        raise HTTPException(400, "Question is too long (max 2000 characters)")
+    if not config.GENIE_SPACE_ID:
+        raise HTTPException(503, "No Genie space is configured for this app")
+    log.info("Genie question from %s: %s", current_user(request), question[:200])
+    try:
+        return insights.ask(question, body.conversation_id, attempts=3)
+    except Exception as exc:  # timeouts, permission errors, unavailable space
+        log.exception("Genie request failed")
+        raise HTTPException(502, f"Genie could not answer: {exc}")
+
+
+def _insight_args(scope: str, key: str) -> None:
+    if scope not in insights.SCOPES:
+        raise HTTPException(400, "scope must be product or changeover")
+    if not key.isdigit() or len(key) > 14:
+        raise HTTPException(400, "key must be a numeric GTIN")
+    if not config.GENIE_SPACE_ID:
+        raise HTTPException(503, "No Genie space is configured for this app")
+
+
+def _insight_response(scope: str, key: str, row: dict | None, version: str | None) -> dict:
+    current = insights.is_current(row, version)
+    pending = insights.is_pending(scope, key)
+    if current and not pending:
+        status = "ready"
+    elif pending or (row and row["status"] == "generating"):
+        status = "generating"
+    else:
+        status = row["status"] if row else "missing"
+    return {"scope": scope, "key": key, "status": status, "current": current, "data_version": version, "insight": row}
+
+
+@app.get("/api/genie/insight")
+def genie_insight(scope: str, key: str):
+    """The cached opening analysis for a product or changeover; queues (re)generation when missing or stale."""
+    _insight_args(scope, key)
+    if key not in insights.items(scope):
+        raise HTTPException(404, f"No {scope} with key {key}")
+    row, version = insights.get(scope, key), insights.data_version(scope)
+    if not insights.is_current(row, version) and not (row and row["status"] == "failed" and row["data_version"] == version):
+        insights.enqueue(scope, key)  # failed analyses of the current version are only retried via Refresh
+    return _insight_response(scope, key, row, version)
+
+
+class InsightRefresh(BaseModel):
+    scope: str
+    key: str
+
+
+@app.post("/api/genie/insight/refresh")
+def genie_insight_refresh(body: InsightRefresh):
+    _insight_args(body.scope, body.key)
+    if body.key not in insights.items(body.scope):
+        raise HTTPException(404, f"No {body.scope} with key {body.key}")
+    queued = insights.enqueue(body.scope, body.key)
+    return {**_insight_response(body.scope, body.key, insights.get(body.scope, body.key), insights.data_version(body.scope)),
+            "status": "generating", "queued": queued}
+
+
+@app.post("/api/genie/insights/prewarm")
+def genie_insights_prewarm():
+    return insights.prewarm_all()
 
 
 # --------------------------------------------------------------------------- utils + static

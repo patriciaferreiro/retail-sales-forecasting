@@ -264,6 +264,49 @@ a.arch-node:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); }
 @media (max-width: 1100px) {
   .changeover-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(160px, 35%) minmax(0, 1fr); }
 }
+/* Ask Genie panel */
+.genie-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); background: #fff; box-shadow: -6px 0 20px rgba(0,0,0,.2); display: flex; flex-direction: column; z-index: 22; }
+.genie-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #e0e4e8; }
+.genie-head h2 { margin: 0; font-size: 16px; }
+.genie-body { flex: 1; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.genie-start { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.genie-msg { border-radius: 8px; padding: 8px 12px; font-size: 13px; max-width: 100%; }
+.genie-msg p { margin: 0 0 6px; }
+.genie-user { align-self: flex-end; background: #1b3139; color: #fff; max-width: 85%; }
+.genie-bot { align-self: stretch; background: #f6f7f9; border: 1px solid #e0e4e8; }
+.genie-err { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.genie-table-wrap { overflow: auto; max-height: 260px; margin: 6px 0; background: #fff; border: 1px solid #e0e4e8; border-radius: 6px; }
+.genie-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.genie-table th { position: sticky; top: 0; background: #eef1f3; text-align: left; padding: 4px 8px; white-space: nowrap; }
+.genie-table td { padding: 4px 8px; border-top: 1px solid #f0f2f4; white-space: nowrap; }
+.genie-sql { white-space: pre-wrap; font-size: 11px; background: #fff; border: 1px solid #e0e4e8; border-radius: 6px; padding: 6px 8px; margin: 4px 0 0; max-height: 200px; overflow: auto; }
+.genie-suggest { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 6px; }
+.chip-btn { text-align: left; font-size: 12px; background: #eef2ff; border-color: #c7d2fe; color: #3730a3; border-radius: 12px; padding: 4px 10px; }
+.genie-input { display: flex; gap: 8px; padding: 10px 16px; border-top: 1px solid #e0e4e8; }
+.genie-input input { flex: 1; }
+.genie-foot { padding: 0 16px 10px; }
+.product-select { max-width: 360px; }
+/* Genie insights section (below the charts) */
+.genie-insights { margin-top: 16px; border: 1px solid #c7d2fe; border-radius: 10px; padding: 14px 16px; background: linear-gradient(180deg, #f5f3ff 0%, #ffffff 120px); display: flex; flex-direction: column; gap: 10px; }
+.gi-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.gi-head h3 { margin: 0 0 2px; font-size: 16px; color: #3730a3; }
+.gi-title { color: #1b3139; font-weight: 600; }
+.genie-badge { white-space: nowrap; font-size: 11px; font-weight: 700; color: #fff; background: #4f46e5; border-radius: 10px; padding: 3px 9px; }
+.gi-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #5a6f77; }
+.gi-analysis { display: flex; flex-direction: column; gap: 6px; }
+.gi-analysis .genie-bot { background: #fff; border-color: #ddd6fe; font-size: 14px; }
+.gi-meta { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.gi-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.gi-chip-group { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.gi-group { font-size: 11px; font-weight: 700; color: #4f46e5; }
+.gi-next { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.gi-input { display: flex; gap: 8px; }
+.gi-input input { flex: 1; font-size: 15px; padding: 10px 12px; border: 2px solid #a5b4fc; border-radius: 8px; }
+.gi-input input:focus { outline: none; border-color: #4f46e5; }
+.gi-input button { padding: 0 18px; }
+.gi-thread { display: flex; flex-direction: column; gap: 8px; }
+.gi-spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid #c7d2fe; border-top-color: #4f46e5; border-radius: 50%; animation: gi-spin .8s linear infinite; vertical-align: -1px; margin-right: 4px; }
+@keyframes gi-spin { to { transform: rotate(360deg); } }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 30; }
 .toast { padding: 10px 14px; border-radius: 6px; color: #fff; background: #1b3139; max-width: 420px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 .toast.ok { background: #166534; }

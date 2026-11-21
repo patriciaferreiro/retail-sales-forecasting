@@ -154,6 +154,24 @@ CREATE TABLE IF NOT EXISTS {S}.ai_suggestions (
 );
 CREATE INDEX IF NOT EXISTS ai_suggestions_product_idx ON {S}.ai_suggestions(product_id, status);
 
+-- Genie insights: the opening analysis per product / changeover, regenerated when the data version changes
+CREATE TABLE IF NOT EXISTS {S}.genie_insights (
+  scope           TEXT NOT NULL,          -- product | changeover
+  item_key        TEXT NOT NULL,          -- product_key / gtin_old
+  data_version    TEXT,                   -- forecast generated_at / changeover evaluated_at it was made from
+  question        TEXT,
+  status          TEXT NOT NULL,          -- generating | ready | failed
+  text            TEXT,
+  sql             TEXT,
+  columns         JSONB NOT NULL DEFAULT '[]'::jsonb,
+  rows            JSONB NOT NULL DEFAULT '[]'::jsonb,
+  suggested       JSONB NOT NULL DEFAULT '[]'::jsonb,
+  conversation_id TEXT,
+  error           TEXT,
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (scope, item_key)
+);
+
 CREATE TABLE IF NOT EXISTS {S}.forecast_runs (
   run_id        BIGINT PRIMARY KEY,
   triggered_by  TEXT,

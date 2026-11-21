@@ -55,4 +55,10 @@ export const api = {
   changeovers: (clientId) =>
     request("GET", `/api/changeovers${clientId ? `?client_id=${encodeURIComponent(clientId)}` : ""}`),
   changeoverWeekly: (gtinOld) => request("GET", `/api/changeovers/${encodeURIComponent(gtinOld)}/weekly`),
+  salesProducts: () => request("GET", "/api/sales-forecast/products"),
+  salesForecast: (productKey) => request("GET", `/api/sales-forecast/${encodeURIComponent(productKey)}`),
+  askGenie: (question, conversationId) =>
+    request("POST", "/api/genie/ask", { question, conversation_id: conversationId ?? null }),
+  genieInsight: (scope, key) => request("GET", `/api/genie/insight?scope=${encodeURIComponent(scope)}&key=${encodeURIComponent(key)}`),
+  refreshInsight: (scope, key) => request("POST", "/api/genie/insight/refresh", { scope, key }),
 };
