@@ -59,4 +59,6 @@ export const api = {
   salesForecast: (productKey) => request("GET", `/api/sales-forecast/${encodeURIComponent(productKey)}`),
   askGenie: (question, conversationId) =>
     request("POST", "/api/genie/ask", { question, conversation_id: conversationId ?? null }),
+  genieInsight: (scope, key) => request("GET", `/api/genie/insight?scope=${encodeURIComponent(scope)}&key=${encodeURIComponent(key)}`),
+  refreshInsight: (scope, key) => request("POST", "/api/genie/insight/refresh", { scope, key }),
 };

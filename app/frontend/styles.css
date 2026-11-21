@@ -286,6 +286,27 @@ a.arch-node:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); }
 .genie-input input { flex: 1; }
 .genie-foot { padding: 0 16px 10px; }
 .product-select { max-width: 360px; }
+/* Genie insights section (below the charts) */
+.genie-insights { margin-top: 16px; border: 1px solid #c7d2fe; border-radius: 10px; padding: 14px 16px; background: linear-gradient(180deg, #f5f3ff 0%, #ffffff 120px); display: flex; flex-direction: column; gap: 10px; }
+.gi-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.gi-head h3 { margin: 0 0 2px; font-size: 16px; color: #3730a3; }
+.gi-title { color: #1b3139; font-weight: 600; }
+.genie-badge { white-space: nowrap; font-size: 11px; font-weight: 700; color: #fff; background: #4f46e5; border-radius: 10px; padding: 3px 9px; }
+.gi-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #5a6f77; }
+.gi-analysis { display: flex; flex-direction: column; gap: 6px; }
+.gi-analysis .genie-bot { background: #fff; border-color: #ddd6fe; font-size: 14px; }
+.gi-meta { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.gi-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.gi-chip-group { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.gi-group { font-size: 11px; font-weight: 700; color: #4f46e5; }
+.gi-next { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.gi-input { display: flex; gap: 8px; }
+.gi-input input { flex: 1; font-size: 15px; padding: 10px 12px; border: 2px solid #a5b4fc; border-radius: 8px; }
+.gi-input input:focus { outline: none; border-color: #4f46e5; }
+.gi-input button { padding: 0 18px; }
+.gi-thread { display: flex; flex-direction: column; gap: 8px; }
+.gi-spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid #c7d2fe; border-top-color: #4f46e5; border-radius: 50%; animation: gi-spin .8s linear infinite; vertical-align: -1px; margin-right: 4px; }
+@keyframes gi-spin { to { transform: rotate(360deg); } }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 30; }
 .toast { padding: 10px 14px; border-radius: 6px; color: #fff; background: #1b3139; max-width: 420px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 .toast.ok { background: #166534; }

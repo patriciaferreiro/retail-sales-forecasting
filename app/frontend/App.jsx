@@ -1048,19 +1048,47 @@ function GenieAnswer({ m, onAsk }) {
   );
 }
 
-function GeniePanel({ open, onClose, suggestions = [], context }) {
+// Prominent Genie section below a chart: the analysis Genie already wrote, what you can ask, and an inline thread.
+function GenieInsights({ scope, itemKey, title, chips = [] }) {
+  const [state, setState] = useState(null);        // response of /api/genie/insight
   const [messages, setMessages] = useState([]);
   const [conversationId, setConversationId] = useState(null);
   const [input, setInput] = useState("");
   const busy = messages.some((m) => m.pending);
-  const endRef = useRef(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  const threadEnd = useRef(null);
+
+  // Load the opening analysis; while Genie is still writing it, check again every 3 seconds
   useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    if (!itemKey) return undefined;
+    let stop = false, timer = null;
+    setState(null); setMessages([]); setConversationId(null);
+    const load = async () => {
+      try {
+        const r = await api.genieInsight(scope, itemKey);
+        if (stop) return;
+        setState(r);
+        if (r.status === "generating" || r.status === "missing") timer = setTimeout(load, 3000);
+      } catch (e) {
+        if (!stop) setState({ status: "error", error: e.message });
+      }
+    };
+    load();
+    return () => { stop = true; clearTimeout(timer); };
+  }, [scope, itemKey]);
+  useEffect(() => { if (messages.length) threadEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [messages]);
+
+  async function refresh() {
+    try {
+      const r = await api.refreshInsight(scope, itemKey);
+      setState(r);
+      const poll = async () => {
+        const x = await api.genieInsight(scope, itemKey);
+        setState(x);
+        if (x.status === "generating") setTimeout(poll, 3000);
+      };
+      setTimeout(poll, 3000);
+    } catch (e) { setState((s) => ({ ...s, status: "error", error: e.message })); }
+  }
 
   async function ask(q) {
     const question = (q ?? input).trim();
@@ -1077,40 +1105,69 @@ function GeniePanel({ open, onClose, suggestions = [], context }) {
       setMessages((ms) => ms.map((m) => (m.id === id ? { id, role: "genie", failed: e.message } : m)));
     }
   }
-  function reset() { setMessages([]); setConversationId(null); }
 
-  if (!open) return null;
+  const ins = state?.insight;
+  const analysis = ins && ins.text ? { text: ins.text, sql: ins.sql, columns: ins.columns, rows: ins.rows, row_count: ins.rows?.length || 0,
+                                       suggested_questions: [] } : null;
+  const generating = !state || state.status === "generating" || state.status === "missing";
+  const nextQuestions = [...new Set([...(ins?.suggested || [])])].slice(0, 3);
+
   return (
-    <div className="panel-overlay" onClick={onClose}>
-      <aside className="genie-panel" onClick={(e) => e.stopPropagation()} aria-label="Ask Genie">
-        <div className="genie-head">
-          <div>
-            <h2>Ask Genie</h2>
-            <div className="muted small">Questions in plain language about sales, forecasts and changeovers{context ? ` · ${context}` : ""}</div>
-          </div>
-          <span className="spacer" />
-          {messages.length > 0 && <button onClick={reset} title="Start a new conversation">New conversation</button>}
-          <button onClick={onClose} title="Close (Esc)">✕</button>
+    <section className="genie-insights">
+      <div className="gi-head">
+        <div>
+          <h3>✨ Genie insights{title ? <span className="gi-title"> · {title}</span> : null}</h3>
+          <div className="muted small">Genie turns plain-language questions into SQL on the governed sales, forecast and changeover tables, and answers with live results.</div>
         </div>
-        <div className="genie-body">
-          {messages.length === 0 && (
-            <div className="genie-start">
-              <p className="muted">Try one of these, or type your own question:</p>
-              {suggestions.map((q) => <button key={q} className="chip-btn" onClick={() => ask(q)}>{q}</button>)}
-            </div>
-          )}
+        <span className="genie-badge">Powered by Databricks Genie</span>
+      </div>
+
+      <div className="gi-analysis">
+        <div className="gi-label">Genie's analysis</div>
+        {generating && !analysis && <div className="genie-msg genie-bot muted"><span className="gi-spinner" /> Genie is analyzing this {scope === "product" ? "product" : "changeover"}… (about 20-30 seconds)</div>}
+        {state?.status === "failed" && !analysis && <div className="genie-msg genie-bot genie-err">Genie couldn't finish this analysis: {ins?.error || "unknown error"}</div>}
+        {state?.status === "error" && <div className="genie-msg genie-bot genie-err">{state.error}</div>}
+        {analysis && <GenieAnswer m={analysis} onAsk={ask} />}
+        {analysis && (
+          <div className="muted small gi-meta">
+            {generating ? <><span className="gi-spinner" /> Updating with the latest data… · </> : null}
+            Written {fmtTime(ins.updated_at)}{!state?.current && !generating ? " · data has changed since" : ""} ·{" "}
+            <button className="link" onClick={refresh} disabled={generating}>Refresh analysis</button>
+          </div>
+        )}
+      </div>
+
+      <div className="gi-label">What you can ask Genie</div>
+      <div className="gi-chips">
+        {chips.map((g) => (
+          <div key={g.group} className="gi-chip-group">
+            <div className="gi-group">{g.group}</div>
+            {g.questions.map((q) => <button key={q} className="chip-btn" disabled={busy} onClick={() => ask(q)}>{q}</button>)}
+          </div>
+        ))}
+      </div>
+      {nextQuestions.length > 0 && messages.length === 0 && (
+        <div className="gi-next"><span className="gi-group">Genie suggests next</span>
+          {nextQuestions.map((q) => <button key={q} className="chip-btn" disabled={busy} onClick={() => ask(q)}>{q}</button>)}</div>
+      )}
+
+      <form className="gi-input" onSubmit={(e) => { e.preventDefault(); ask(); }}>
+        <input value={input} onChange={(e) => setInput(e.target.value)} disabled={busy} maxLength={2000}
+               placeholder={conversationId ? "Ask a follow-up… e.g. \"break that down by month\"" : `Ask anything about ${title || "sales, forecasts and changeovers"}…`} />
+        <button className="primary" disabled={busy || !input.trim()}>{busy ? "Genie is answering…" : "Ask Genie"}</button>
+      </form>
+
+      {messages.length > 0 && (
+        <div className="gi-thread">
           {messages.map((m) => (m.role === "user"
             ? <div key={m.id} className="genie-msg genie-user">{m.text}</div>
             : <GenieAnswer key={m.id} m={m} onAsk={ask} />))}
-          <div ref={endRef} />
+          <div ref={threadEnd} />
+          <button className="link small" onClick={() => { setMessages([]); setConversationId(null); }}>New conversation</button>
         </div>
-        <form className="genie-input" onSubmit={(e) => { e.preventDefault(); ask(); }}>
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={conversationId ? "Ask a follow-up…" : "Ask a question…"} disabled={busy} maxLength={2000} />
-          <button className="primary" disabled={busy || !input.trim()}>Ask</button>
-        </form>
-        <div className="muted small genie-foot">Answers come from Databricks Genie and can be wrong; check the SQL for important decisions. Data is synthetic.</div>
-      </aside>
-    </div>
+      )}
+      <div className="muted small">Answers can be wrong; check the SQL for important decisions. Sales data is synthetic.</div>
+    </section>
   );
 }
 
@@ -1123,7 +1180,6 @@ function SalesForecastPage({ notify, vendor, onVendor }) {
   const [data, setData] = useState(null);
   const [runs, setRuns] = useState([]);
   const [show, setShow] = useStoredState("plf.sales.show", { ai: true, ml: true, bands: true });
-  const [genieOpen, setGenieOpen] = useState(false);
   const toggle = (k) => setShow((s) => ({ ...s, [k]: !s[k] }));
 
   const loadMeta = useCallback(() => api.salesProducts().then(setMeta).catch((e) => notify(e.message, "error")), [notify]);
@@ -1189,12 +1245,12 @@ function SalesForecastPage({ notify, vendor, onVendor }) {
     return shifted.length === 12 ? shifted.reduce((s, a) => s + a.units, 0) : null;
   }, [data]);
   const label = (m) => `${MODEL_LABEL[m]}${acc[m] ? ` (holdout error ${acc[m].wape_pct.toFixed(1)}%)` : ""}`;
-  const suggestions = current ? [
-    `What is the forecast for ${current.article_description} for the next 12 weeks?`,
-    `Which ${current.client_id} products are forecast to grow most compared with the same weeks last year?`,
-    "Which forecast model is more accurate, and by how much?",
-    "Which 5 products are forecast to sell the most units in the next 12 weeks?",
-  ] : ["Which 5 products are forecast to sell the most units in the next 12 weeks?"];
+  const chips = current ? [
+    { group: "Compare", questions: [`How does ${current.article_description} compare with other ${current.category} products in forecast growth vs last year?`] },
+    { group: "Rank", questions: [`Which 5 ${current.client_id} products are forecast to grow most vs the same weeks last year?`] },
+    { group: "Explain", questions: [`Why do mlflow_lightgbm and ai_forecast differ for ${current.article_description}, and which model was more accurate?`] },
+    { group: "Drill down", questions: [`Show the weekly forecast for ${current.article_description} next to actual sales in the same weeks last year`] },
+  ] : [];
 
   if (!meta) return <div className="panel"><div className="empty-state">Loading…</div></div>;
   if (meta.error) {
@@ -1219,7 +1275,6 @@ function SalesForecastPage({ notify, vendor, onVendor }) {
           <label><input type="checkbox" checked={show.bands} onChange={() => toggle("bands")} /> 90% ranges</label>
         </div>
         <span className="spacer" />
-        <button onClick={() => setGenieOpen(true)} title="Ask questions about the data in plain language">✨ Ask Genie</button>
         {latest && <span className="muted small"><span className={`badge run-${latest.status}`}>{latest.status}</span> {fmtTime(latest.started_at)}</span>}
         <button className="primary" disabled={active} onClick={run}>{active ? "Forecast running…" : "Run forecast"}</button>
       </div>
@@ -1253,9 +1308,9 @@ function SalesForecastPage({ notify, vendor, onVendor }) {
             ))}
           </div>
           <div className="muted small">Holdout error = total absolute error when forecasting the last 12 weeks without seeing them (all products); lower is better. Sales are synthetic demo data.</div>
+          <GenieInsights scope="product" itemKey={current.product_key} title={current.article_description} chips={chips} />
         </>
       )}
-      <GeniePanel open={genieOpen} onClose={() => setGenieOpen(false)} suggestions={suggestions} context={current ? current.article_description : null} />
     </div>
   );
 }
@@ -1274,7 +1329,6 @@ function ChangeoverPage({ notify, vendor, onVendor }) {
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState(null);
   const [weeks, setWeeks] = useState(null);
-  const [genieOpen, setGenieOpen] = useState(false);
 
   useEffect(() => {
     api.changeovers().then((d) => {
@@ -1316,7 +1370,7 @@ function ChangeoverPage({ notify, vendor, onVendor }) {
   return (
     <div className="changeover-layout">
       <div className="panel co-list">
-        <div className="uploads-head"><h2>GTIN changeovers</h2><button onClick={() => setGenieOpen(true)} title="Ask questions about the changeovers in plain language">✨ Ask Genie</button></div>
+        <div className="uploads-head"><h2>GTIN changeovers</h2></div>
         <select className="vendor-select" value={vendor} onChange={(e) => onVendor(e.target.value)}>
           <option value="">All vendors ({data.changeovers.length})</option>
           {data.clients.map((v) => <option key={v} value={v}>{v} ({data.changeovers.filter((c) => c.client_id === v).length})</option>)}
@@ -1388,15 +1442,17 @@ function ChangeoverPage({ notify, vendor, onVendor }) {
                 : `Shows the last 26 weeks. The switch is on ${current.launch_date}.`}
               {current.is_synthetic_data ? " Sales are synthetic demo data." : ""} Evaluated {fmtTime(current.evaluated_at)}.
             </div>
+            <GenieInsights scope="changeover" itemKey={current.gtin_old} title={current.article_description} chips={[
+              { group: "Compare", questions: [`How does the ${current.article_description} changeover compare with the other ${current.category} changeovers?`] },
+              { group: "Rank", questions: ["Rank all measured changeovers by their effect on weekly unit sales, with the 95% range"] },
+              { group: "Explain", questions: [current.status === "measured"
+                ? `How reliable is the estimated effect for ${current.article_description}, and what does controls_fit mean here?`
+                : "Which changeovers are still pending and when will their effect become measurable?"] },
+              { group: "Drill down", questions: [`Show weekly actual and expected units for ${current.article_description} around its changeover`] },
+            ]} />
           </>
         )}
       </div>
-      <GeniePanel open={genieOpen} onClose={() => setGenieOpen(false)} context={current ? current.article_description : null} suggestions={[
-        "How did the GTIN changeovers affect sales? Show the effect and range per product.",
-        ...(current ? [`How did weekly sales of ${current.article_description} develop around its changeover?`] : []),
-        "Which changeovers had no clear effect on sales?",
-        "Which changeovers are still pending and when do they switch?",
-      ]} />
     </div>
   );
 }

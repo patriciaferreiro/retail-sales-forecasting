@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
-from . import config
+from . import config, insights
 from .db import S, cursor, init_db, w
 from .extraction import extract_file, parse_text
 from .suggestions import SERVING_ENDPOINT, ask_model
@@ -41,6 +41,7 @@ ACTIVE_RUN_STATES = ("QUEUED", "PENDING", "RUNNING", "BLOCKED", "WAITING_FOR_RET
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    insights.prewarm_in_background()  # prepare missing or stale Genie insights without delaying startup
     yield
 
 
@@ -904,6 +905,8 @@ def _refresh_run(cur, run_id: int) -> dict:
     )
     if status == "SUCCESS":
         _forecast_cache.clear()
+        insights.clear_cache()
+        insights.prewarm_in_background()  # new data version: regenerate the Genie insights
     return cur.fetchone()
 
 
@@ -1192,9 +1195,6 @@ class GenieAsk(BaseModel):
     conversation_id: str | None = None
 
 
-GENIE_MAX_ROWS = 100
-
-
 @app.post("/api/genie/ask")
 def genie_ask(body: GenieAsk, request: Request):
     """Ask the Genie space a question (or a follow-up in the same conversation). Runs as the app service principal."""
@@ -1207,35 +1207,63 @@ def genie_ask(body: GenieAsk, request: Request):
         raise HTTPException(503, "No Genie space is configured for this app")
     log.info("Genie question from %s: %s", current_user(request), question[:200])
     try:
-        if body.conversation_id:
-            msg = w.genie.create_message_and_wait(config.GENIE_SPACE_ID, body.conversation_id, question, timeout=timedelta(minutes=4))
-        else:
-            msg = w.genie.start_conversation_and_wait(config.GENIE_SPACE_ID, question, timeout=timedelta(minutes=4))
+        return insights.ask(question, body.conversation_id, attempts=3)
     except Exception as exc:  # timeouts, permission errors, unavailable space
         log.exception("Genie request failed")
         raise HTTPException(502, f"Genie could not answer: {exc}")
-    out = {"conversation_id": msg.conversation_id, "message_id": msg.message_id,
-           "status": msg.status.value if msg.status else None, "text": None, "sql": None, "sql_description": None,
-           "columns": [], "rows": [], "row_count": 0, "truncated": False, "suggested_questions": [],
-           "error": msg.error.error if getattr(msg, "error", None) else None}
-    for a in msg.attachments or []:
-        if a.text and a.text.content:
-            out["text"] = (out["text"] + "\n\n" if out["text"] else "") + a.text.content
-        if a.query:
-            out["sql"], out["sql_description"] = a.query.query, a.query.description
-            try:
-                qr = w.genie.get_message_attachment_query_result(config.GENIE_SPACE_ID, msg.conversation_id, msg.message_id, a.attachment_id)
-                sr = qr.statement_response
-                rows = (sr.result.data_array or []) if sr and sr.result else []
-                out["columns"] = [c.name for c in sr.manifest.schema.columns] if sr and sr.manifest else []
-                out["row_count"] = len(rows)
-                out["rows"], out["truncated"] = rows[:GENIE_MAX_ROWS], len(rows) > GENIE_MAX_ROWS
-            except Exception as exc:
-                log.warning("Could not fetch the Genie query result: %s", exc)
-        sq = getattr(a, "suggested_questions", None)
-        if sq and getattr(sq, "questions", None):
-            out["suggested_questions"] = list(sq.questions)[:3]
-    return out
+
+
+def _insight_args(scope: str, key: str) -> None:
+    if scope not in insights.SCOPES:
+        raise HTTPException(400, "scope must be product or changeover")
+    if not key.isdigit() or len(key) > 14:
+        raise HTTPException(400, "key must be a numeric GTIN")
+    if not config.GENIE_SPACE_ID:
+        raise HTTPException(503, "No Genie space is configured for this app")
+
+
+def _insight_response(scope: str, key: str, row: dict | None, version: str | None) -> dict:
+    current = insights.is_current(row, version)
+    pending = insights.is_pending(scope, key)
+    if current and not pending:
+        status = "ready"
+    elif pending or (row and row["status"] == "generating"):
+        status = "generating"
+    else:
+        status = row["status"] if row else "missing"
+    return {"scope": scope, "key": key, "status": status, "current": current, "data_version": version, "insight": row}
+
+
+@app.get("/api/genie/insight")
+def genie_insight(scope: str, key: str):
+    """The cached opening analysis for a product or changeover; queues (re)generation when missing or stale."""
+    _insight_args(scope, key)
+    if key not in insights.items(scope):
+        raise HTTPException(404, f"No {scope} with key {key}")
+    row, version = insights.get(scope, key), insights.data_version(scope)
+    if not insights.is_current(row, version) and not (row and row["status"] == "failed" and row["data_version"] == version):
+        insights.enqueue(scope, key)  # failed analyses of the current version are only retried via Refresh
+    return _insight_response(scope, key, row, version)
+
+
+class InsightRefresh(BaseModel):
+    scope: str
+    key: str
+
+
+@app.post("/api/genie/insight/refresh")
+def genie_insight_refresh(body: InsightRefresh):
+    _insight_args(body.scope, body.key)
+    if body.key not in insights.items(body.scope):
+        raise HTTPException(404, f"No {body.scope} with key {body.key}")
+    queued = insights.enqueue(body.scope, body.key)
+    return {**_insight_response(body.scope, body.key, insights.get(body.scope, body.key), insights.data_version(body.scope)),
+            "status": "generating", "queued": queued}
+
+
+@app.post("/api/genie/insights/prewarm")
+def genie_insights_prewarm():
+    return insights.prewarm_all()
 
 
 # --------------------------------------------------------------------------- utils + static
