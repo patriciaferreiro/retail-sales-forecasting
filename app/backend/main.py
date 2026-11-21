@@ -1068,6 +1068,71 @@ def forecast(client_id: str | None = None):
             "accuracy": {"ai_forecast": accuracy.get("ai_forecast_current"), "mlflow": accuracy.get("lightgbm_global")}}
 
 
+# --------------------------------------------------------------------------- changeover impact
+
+_IMPACT_FLOATS = ("effect_pct", "ci_low", "ci_high", "transition_dip_pct", "revenue_effect_pct", "units_per_week_pre",
+                  "units_per_week_post", "pretrend_p")
+
+
+def _bool(v):
+    return None if v is None else str(v).lower() == "true"
+
+
+def _impact_rows() -> dict:
+    try:
+        rows = run_sql(
+            f"""SELECT client_id, article_description, category, gtin_old, gtin_new, CAST(launch_date AS STRING) AS launch_date, status,
+                       effect_pct, ci_low, ci_high, significant, transition_dip_pct, revenue_effect_pct, units_per_week_pre,
+                       units_per_week_post, n_controls, controls_fit, pretrend_p, method, is_synthetic_data,
+                       CAST(evaluated_at AS STRING) AS evaluated_at
+                FROM {config.CHANGEOVER_IMPACT_TABLE} ORDER BY launch_date DESC, client_id, article_description"""
+        )
+    except SqlError as exc:  # not run yet, or the app can't read it
+        log.warning("Changeover impact unavailable: %s", exc)
+        return {"changeovers": [], "error": "not_run" if _missing_table(exc) else "no_access"}
+    for r in rows:
+        for k in _IMPACT_FLOATS:
+            r[k] = float(r[k]) if r[k] is not None else None
+        r["n_controls"] = int(r["n_controls"]) if r["n_controls"] is not None else None
+        for k in ("significant", "controls_fit", "is_synthetic_data"):
+            r[k] = _bool(r[k])
+    return {"changeovers": rows, "error": None}
+
+
+@app.get("/api/changeovers")
+def changeovers(client_id: str | None = None):
+    data = _cached("changeovers", _impact_rows, ttl=300)
+    rows = data["changeovers"]
+    clients = sorted({r["client_id"] for r in rows if r.get("client_id")})
+    if client_id:
+        rows = [r for r in rows if normalize_vendor(r["client_id"]) == normalize_vendor(client_id)]
+    evaluated = max((r["evaluated_at"] for r in rows if r.get("evaluated_at")), default=None)
+    return {"changeovers": rows, "clients": clients, "evaluated_at": evaluated, "error": data["error"]}
+
+
+@app.get("/api/changeovers/{gtin_old}/weekly")
+def changeover_weekly(gtin_old: str):
+    if not gtin_old.isdigit() or len(gtin_old) > 14:
+        raise HTTPException(400, "gtin_old must be a numeric GTIN")
+    try:
+        rows = run_sql(
+            f"""SELECT CAST(week AS STRING) AS week, phase, actual_units, expected_units
+                FROM {config.CHANGEOVER_WEEKLY_TABLE} WHERE gtin_old = :gtin ORDER BY week""",
+            {"gtin": gtin_old},
+        )
+    except SqlError as exc:
+        log.warning("Changeover weekly series unavailable: %s", exc)
+        raise HTTPException(503, "Changeover series not available (not run yet or no access)")
+    for r in rows:
+        for k in ("actual_units", "expected_units"):
+            r[k] = float(r[k]) if r[k] is not None else None
+    return {"gtin_old": gtin_old, "weeks": rows}
+
+
+def normalize_vendor(s: str | None) -> str:
+    return (s or "").strip().lower()
+
+
 # --------------------------------------------------------------------------- utils + static
 
 def _jsonable(row: dict) -> dict:

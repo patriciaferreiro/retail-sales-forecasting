@@ -19,5 +19,7 @@ SILVER_TABLE = f"{CATALOG}.silver.product_launches"
 GOLD_TABLE = f"{CATALOG}.gold.launch_forecasts"
 MLFLOW_FORECAST_TABLE = f"{CATALOG}.gold.launch_forecasts_mlflow"
 ACCURACY_TABLE = f"{CATALOG}.gold.launch_forecast_accuracy"
+CHANGEOVER_IMPACT_TABLE = f"{CATALOG}.gold.changeover_impact"
+CHANGEOVER_WEEKLY_TABLE = f"{CATALOG}.gold.changeover_weekly"
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024

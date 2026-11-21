@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis,
+  Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceArea, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { api } from "./api.js";
 
@@ -1016,6 +1016,140 @@ function ForecastPage({ notify }) {
   );
 }
 
+// ------------------------------------------------------------------ changeover impact
+const pct = (v, digits = 1) => (v == null ? "–" : `${v > 0 ? "+" : ""}${v.toFixed(digits)}%`);
+const addWeeks = (iso, n) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 7 * n); return d.toISOString().slice(0, 10); };
+
+function EffectBadge({ c }) {
+  if (c.status !== "measured") return <span className={`effect-badge e-${c.status}`}>{c.status === "pending" ? "pending" : "not enough data"}</span>;
+  const cls = !c.significant ? "e-flat" : c.effect_pct > 0 ? "e-up" : "e-down";
+  return <span className={`effect-badge ${cls}`} title={c.significant ? "Clear effect (95% range excludes 0)" : "No clear effect (95% range includes 0)"}>{pct(c.effect_pct)}</span>;
+}
+
+function ChangeoverPage({ notify, vendor, onVendor }) {
+  const [data, setData] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [weeks, setWeeks] = useState(null);
+
+  useEffect(() => {
+    api.changeovers().then((d) => {
+      setData(d);
+      const first = d.changeovers.find((c) => c.status === "measured") || d.changeovers[0];
+      setSelected((s) => s || first?.gtin_old || null);
+    }).catch((e) => notify(e.message, "error"));
+  }, [notify]);
+
+  const vKey = normVendor(vendor);
+  const list = useMemo(() => (data?.changeovers || []).filter((c) => !vKey || normVendor(c.client_id) === vKey), [data, vKey]);
+  const current = list.find((c) => c.gtin_old === selected) || list[0] || null;
+
+  useEffect(() => {
+    if (!current) { setWeeks(null); return; }
+    setWeeks(null);
+    api.changeoverWeekly(current.gtin_old).then((d) => setWeeks(d.weeks)).catch((e) => notify(e.message, "error"));
+  }, [current?.gtin_old, notify]); // eslint-disable-line
+
+  if (!data) return <div className="panel"><div className="empty-state">Loading…</div></div>;
+  if (data.error) {
+    return (
+      <div className="panel"><div className="empty-state">
+        {data.error === "no_access"
+          ? "The app can't read the changeover results yet (it needs SELECT on gold.changeover_impact and gold.changeover_weekly)."
+          : "No changeover results yet. Run the src/analysis/changeover_impact notebook."}
+      </div></div>
+    );
+  }
+  const measured = list.filter((c) => c.status === "measured");
+  const other = list.filter((c) => c.status !== "measured");
+  const item = (c) => (
+    <li key={c.gtin_old} className={current?.gtin_old === c.gtin_old ? "sel" : ""} onClick={() => setSelected(c.gtin_old)}>
+      <div className="co-row"><span className="co-name">{c.article_description}</span><EffectBadge c={c} /></div>
+      <div className="muted small">{c.client_id} · {c.category} · switch {c.launch_date}{c.status === "measured" && c.controls_fit === false ? " · ⚠ check controls" : ""}</div>
+    </li>
+  );
+
+  return (
+    <div className="changeover-layout">
+      <div className="panel co-list">
+        <div className="uploads-head"><h2>GTIN changeovers</h2></div>
+        <select className="vendor-select" value={vendor} onChange={(e) => onVendor(e.target.value)}>
+          <option value="">All vendors ({data.changeovers.length})</option>
+          {data.clients.map((v) => <option key={v} value={v}>{v} ({data.changeovers.filter((c) => c.client_id === v).length})</option>)}
+        </select>
+        <div className="co-scroll">
+          <h3>Measured <span className="muted">{measured.length}</span></h3>
+          {measured.length ? <ul className="co-items">{measured.map(item)}</ul> : <p className="muted small">None for this vendor.</p>}
+          <h3>Pending <span className="muted">{other.length}</span></h3>
+          {other.length ? <ul className="co-items">{other.map(item)}</ul> : <p className="muted small">None for this vendor.</p>}
+        </div>
+      </div>
+      <div className="panel co-detail">
+        {!current ? <div className="empty-state">No changeovers for this vendor.</div> : (
+          <>
+            <div className="co-head">
+              <div>
+                <h2>{current.article_description}</h2>
+                <div className="muted">{current.client_id} · {current.category} · GTIN {current.gtin_old} → {current.gtin_new} · switch week {current.launch_date}</div>
+              </div>
+              <EffectBadge c={current} />
+            </div>
+            {current.status === "measured" ? (
+              <div className="kpis">
+                <div className="kpi"><div className="kpi-label">Effect on weekly units</div><div className="kpi-value">{pct(current.effect_pct)}</div>
+                  <div className="muted small">95% range {pct(current.ci_low)} to {pct(current.ci_high)}{current.significant ? "" : " · no clear effect"}</div></div>
+                <div className="kpi"><div className="kpi-label">Units per week</div><div className="kpi-value">{Math.round(current.units_per_week_pre)} → {Math.round(current.units_per_week_post)}</div>
+                  <div className="muted small">raw before vs after (includes seasonality)</div></div>
+                <div className="kpi"><div className="kpi-label">Transition dip</div><div className="kpi-value">{pct(current.transition_dip_pct)}</div>
+                  <div className="muted small">first 3 weeks, old and new stock overlap</div></div>
+                <div className="kpi"><div className="kpi-label">Revenue effect</div><div className="kpi-value">{pct(current.revenue_effect_pct)}</div>
+                  <div className="muted small">compared with {current.n_controls} control products</div></div>
+              </div>
+            ) : (
+              <div className="kpis">
+                <div className="kpi"><div className="kpi-label">Current sales</div><div className="kpi-value">{Math.round(current.units_per_week_pre ?? 0)} units/week</div>
+                  <div className="muted small">average of the last 12 weeks</div></div>
+                <div className="kpi"><div className="kpi-label">Impact measurable from</div><div className="kpi-value">{addWeeks(current.launch_date, 15)}</div>
+                  <div className="muted small">needs 12 weeks after the 3-week transition</div></div>
+                <div className="kpi"><div className="kpi-label">Controls</div><div className="kpi-value">{current.n_controls ?? "–"}</div>
+                  <div className="muted small">same-category products without a change</div></div>
+              </div>
+            )}
+            {current.status === "measured" && current.controls_fit === false && (
+              <div className="co-warn">⚠ Before the switch this product was already drifting away from its controls (trend p = {current.pretrend_p?.toFixed(2)}), so treat the effect with extra caution.</div>
+            )}
+            <div className="chart">
+              {!weeks ? <div className="empty-state">Loading chart…</div> : (
+                <ResponsiveContainer width="100%" height={340}>
+                  <ComposedChart data={weeks} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="week" />
+                    <YAxis label={{ value: "Units / week (all stores)", angle: -90, position: "insideLeft" }} />
+                    <Tooltip formatter={(v) => (typeof v === "number" ? Math.round(v) : v)} />
+                    <Legend />
+                    {current.status === "measured" && (
+                      <ReferenceArea x1={current.launch_date} x2={addWeeks(current.launch_date, 2)} fill="#8a99a0" fillOpacity={0.15} label={{ value: "transition", fontSize: 11, fill: "#5a6f77" }} />
+                    )}
+                    <Line dataKey="actual_units" name="Actual (old + new GTIN)" stroke="#1b3139" strokeWidth={2} dot={false} />
+                    {current.status === "measured" && (
+                      <Line dataKey="expected_units" name="Expected without the change" stroke="#ff3621" strokeDasharray="6 4" strokeWidth={2} dot={false} />
+                    )}
+                  </ComposedChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+            <div className="muted small">
+              {current.status === "measured"
+                ? "Expected = what this product would have sold without the change, based on same-category controls, adjusted for promotions, store and week."
+                : `Shows the last 26 weeks. The switch is on ${current.launch_date}.`}
+              {current.is_synthetic_data ? " Sales are synthetic demo data." : ""} Evaluated {fmtTime(current.evaluated_at)}.
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ architecture view
 // Node kinds map to Databricks product areas (colour-coded, see legend)
 const KINDS = {
@@ -1171,6 +1305,7 @@ export default function App() {
           <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>Upload &amp; review</button>
           <button className={tab === "check" ? "on" : ""} onClick={() => setTab("check")}>Ingestion check</button>
           <button className={tab === "forecast" ? "on" : ""} onClick={() => setTab("forecast")}>Forecast</button>
+          <button className={tab === "impact" ? "on" : ""} onClick={() => setTab("impact")}>Changeover impact</button>
         </nav>
         <button className="arch-btn" onClick={() => setShowArch(true)} title="Architecture, Databricks components and data flow">Architecture</button>
         <span className="user">{me?.email}</span>
@@ -1188,6 +1323,8 @@ export default function App() {
           </div>
         ) : tab === "check" ? (
           <IngestionCheck uploadId={uploadId} onSelect={setUploadId} onReview={() => setTab("review")} notify={notify} />
+        ) : tab === "impact" ? (
+          <ChangeoverPage notify={notify} vendor={vendor} onVendor={setVendor} />
         ) : (
           <ForecastPage notify={notify} />
         )}

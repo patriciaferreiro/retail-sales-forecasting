@@ -237,6 +237,33 @@ a.arch-node:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); }
 .ms-card.ms-ai { border-left-color: #ff3621; }
 .ms-card.ms-ml { border-left-color: #7c3aed; }
 .ms-card .muted { margin-top: 2px; }
+/* Changeover impact */
+.changeover-layout { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; flex: 1; min-height: 0; }
+.co-list { display: flex; flex-direction: column; min-height: 0; }
+.co-scroll { overflow: auto; min-height: 0; margin-top: 8px; }
+.co-scroll h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #5a6f77; margin: 10px 0 4px; }
+.co-items { list-style: none; margin: 0; padding: 0; }
+.co-items li { padding: 8px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+.co-items li:hover { background: #f6f7f9; }
+.co-items li.sel { background: #eef2ff; border-color: #c7d2fe; }
+.co-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.co-name { font-weight: 600; font-size: 13px; }
+.co-detail { min-width: 0; overflow: auto; }
+.co-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.co-head h2 { margin: 0 0 2px; font-size: 16px; }
+.effect-badge { font-weight: 700; font-size: 12px; border-radius: 10px; padding: 2px 8px; white-space: nowrap; }
+.e-up { background: #dcfce7; color: #166534; }
+.e-down { background: #fee2e2; color: #991b1b; }
+.e-flat { background: #f1f5f9; color: #475569; }
+.e-pending, .e-insufficient_data { background: #fef3c7; color: #92400e; font-weight: 600; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.kpi { border: 1px solid #e0e4e8; border-radius: 6px; padding: 8px 12px; }
+.kpi-label { font-size: 12px; color: #5a6f77; }
+.kpi-value { font-size: 20px; font-weight: 700; margin: 2px 0; }
+.co-warn { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; }
+@media (max-width: 1100px) {
+  .changeover-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(160px, 35%) minmax(0, 1fr); }
+}
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 30; }
 .toast { padding: 10px 14px; border-radius: 6px; color: #fff; background: #1b3139; max-width: 420px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 .toast.ok { background: #166534; }

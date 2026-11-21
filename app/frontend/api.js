@@ -52,4 +52,7 @@ export const api = {
   run: (id) => request("GET", `/api/forecast/runs/${id}`),
   forecast: (clientId) =>
     request("GET", `/api/forecast${clientId ? `?client_id=${encodeURIComponent(clientId)}` : ""}`),
+  changeovers: (clientId) =>
+    request("GET", `/api/changeovers${clientId ? `?client_id=${encodeURIComponent(clientId)}` : ""}`),
+  changeoverWeekly: (gtinOld) => request("GET", `/api/changeovers/${encodeURIComponent(gtinOld)}/weekly`),
 };
