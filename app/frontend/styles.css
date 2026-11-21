@@ -23,9 +23,29 @@ main > * { flex: 1 1 auto; min-height: 0; }
 .uploads-bar .fname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .uploads-drop { position: absolute; top: calc(100% + 4px); left: 0; width: min(420px, 100%); max-height: 70vh; display: flex; flex-direction: column; background: #fff; border: 1px solid #d5dce1; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); padding: 10px; }
 .uploads-drop .upload-list { max-height: 50vh; }
+.uploads-bar { flex-wrap: wrap; }
+.panel.uploads.compact.drag { border-color: #ff3621; background: #fff5f3; }
+.drop-title { font-weight: 600; margin-bottom: 6px; }
+/* Expanded upload panel: three labelled steps */
+.uploads-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.uploads-head h2 { font-size: 14px; margin: 0; }
+.icon-btn { padding: 2px 9px; font-size: 15px; line-height: 1.2; }
+.up-sec { margin-top: 10px; }
+.up-sec.grow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.up-sec h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 13px; }
+.up-sec h3 .count { margin-left: auto; font-weight: 400; }
+.step { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: #1b3139; color: #fff; font-size: 11px; font-weight: 700; flex: none; }
+.dropzone { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 12px; }
+.vendor-select { width: 100%; }
+.uploads-bar .vendor-select { width: auto; max-width: 220px; }
+.note { margin: 0 0 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.chip { background: #eef2ff; color: #3730a3; border-radius: 8px; padding: 0 6px; font-size: 11px; }
+/* vendor filter banner in the review grid */
+.vendor-banner { display: flex; align-items: center; gap: 6px; background: #eef2ff; color: #1e1b4b; border-radius: 4px; padding: 5px 10px; margin-bottom: 8px; font-size: 12px; }
 .dropzone { border: 2px dashed #b8c2c8; border-radius: 6px; padding: 24px 12px; text-align: center; cursor: pointer; color: #5a6f77; }
 .dropzone.drag, .dropzone:hover { border-color: #ff3621; background: #fff5f3; }
-.uploads h3 { margin: 14px 0 6px; font-size: 13px; }
+
 .upload-list { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; min-height: 0; overflow: auto; }
 .upload-list li { padding: 8px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
 .upload-list li:hover { background: #f3f5f7; }

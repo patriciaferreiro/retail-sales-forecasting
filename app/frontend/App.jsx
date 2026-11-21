@@ -54,6 +54,9 @@ function useMediaQuery(query) {
   return matches;
 }
 
+// Vendor = the products' Client field; compared ignoring case and surrounding spaces
+const normVendor = (s) => (s || "").trim().toLowerCase();
+
 const HIDEABLE = [
   ...COLUMNS.filter((c) => c.hideable).map((c) => ({ key: c.key, label: c.label })),
   { key: "updated_at", label: "Last edit" },
@@ -71,7 +74,7 @@ function Toasts({ items, onClose }) {
 }
 
 // ------------------------------------------------------------------ uploads
-function UploadPanel({ selected, onSelect, notify, compact = false }) {
+function UploadPanel({ selected, onSelect, notify, compact = false, canExpand = true, onToggleCollapse, vendor = "", onVendor }) {
   const [uploads, setUploads] = useState([]);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
@@ -110,28 +113,71 @@ function UploadPanel({ selected, onSelect, notify, compact = false }) {
 
   const pick = (id) => { onSelect(id); setOpen(false); };
   const current = uploads.find((u) => u.upload_id === selected);
+  const openPicker = () => inputRef.current?.click();
+  const dropHandlers = {
+    onDragOver: (e) => { e.preventDefault(); setDrag(true); },
+    onDragLeave: () => setDrag(false),
+    onDrop: (e) => { e.preventDefault(); setDrag(false); send(e.dataTransfer.files); },
+  };
 
-  const body = (
+  // Vendors across all uploads (case-insensitive), with how many uploads include each
+  const vKey = normVendor(vendor);
+  const vendors = useMemo(() => {
+    const m = new Map();
+    for (const u of uploads) {
+      for (const k of new Set((u.vendors || []).map(normVendor))) {
+        if (!k) continue;
+        const label = (u.vendors || []).find((v) => normVendor(v) === k).trim();
+        const e = m.get(k) || { key: k, label, count: 0 };
+        e.count += 1;
+        m.set(k, e);
+      }
+    }
+    if (vKey && !m.has(vKey)) m.set(vKey, { key: vKey, label: vendor.trim(), count: 0 }); // keep a remembered choice visible
+    return [...m.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [uploads, vKey, vendor]);
+  const inProgress = (u) => u.status === "uploaded" || u.status === "extracting";
+  // With a vendor selected: uploads with a product from that vendor, plus uploads still being extracted
+  // (so a fresh upload never disappears); finished uploads without products are hidden and counted
+  const filtered = vKey
+    ? uploads.filter((u) => inProgress(u) || (u.vendors || []).some((v) => normVendor(v) === vKey))
+    : uploads;
+  const hiddenNoProducts = vKey ? uploads.filter((u) => !inProgress(u) && !(u.vendors || []).length).length : 0;
+
+  const fileInput = (
+    <input ref={inputRef} type="file" multiple hidden accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.tif,.tiff"
+           onChange={(e) => send(e.target.files)} />
+  );
+  const vendorSelect = (
+    <select className="vendor-select" value={vKey ? (vendors.find((v) => v.key === vKey)?.label ?? "") : ""}
+            onChange={(e) => onVendor?.(e.target.value)} title="Filter uploads and products by vendor (Client)">
+      <option value="">All vendors ({uploads.length})</option>
+      {vendors.map((v) => <option key={v.key} value={v.label}>{v.label} ({v.count})</option>)}
+    </select>
+  );
+  const filterNotes = (
     <>
-      <div
-        className={`dropzone ${drag ? "drag" : ""}`}
-        onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
-        onDragLeave={() => setDrag(false)}
-        onDrop={(e) => { e.preventDefault(); setDrag(false); send(e.dataTransfer.files); }}
-        onClick={() => inputRef.current?.click()}
-      >
-        <input ref={inputRef} type="file" multiple hidden accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.tif,.tiff"
-               onChange={(e) => send(e.target.files)} />
-        {busy ? "Uploading…" : <>Drop launch documents here or <u>browse</u><br /><small>PDF, DOCX, images</small></>}
-      </div>
-      <h3>Uploads</h3>
+      {vKey && hiddenNoProducts > 0 && (
+        <div className="muted note">
+          {hiddenNoProducts} upload(s) without products hidden ·{" "}
+          <button className="link" onClick={() => onVendor?.("")}>Show all vendors</button>
+        </div>
+      )}
+    </>
+  );
+
+  const list = (
+    <>
       <ul className="upload-list">
-        {uploads.map((u) => (
+        {filtered.map((u) => (
           <li key={u.upload_id} className={u.upload_id === selected ? "active" : ""} onClick={() => pick(u.upload_id)}>
             <div className="row1">
               <span className="fname" title={u.file_name}>{u.file_name}</span>
               <span className={`badge ${u.status}`}>{u.status}</span>
             </div>
+            {(u.vendors || []).length > 0 && (
+              <div className="chips">{u.vendors.map((v) => <span key={v} className="chip">{v}</span>)}</div>
+            )}
             <div className="row2">
               {u.total > 0
                 ? <>{u.pending} pending · {u.approved} approved · {u.published} published{u.rejected ? ` · ${u.rejected} rejected` : ""}</>
@@ -146,21 +192,70 @@ function UploadPanel({ selected, onSelect, notify, compact = false }) {
             )}
           </li>
         ))}
-        {!uploads.length && <li className="empty">No uploads yet</li>}
+        {!uploads.length && <li className="empty">No uploads yet. Upload a launch document to start.</li>}
+        {uploads.length > 0 && !filtered.length && <li className="empty">No uploads for this vendor</li>}
       </ul>
     </>
   );
 
-  if (!compact) return <div className="panel uploads">{body}</div>;
-  // Narrow screens: a one-line picker above the grid; the full panel opens as a dropdown
-  return (
-    <div className="panel uploads compact" ref={wrapRef}>
-      <div className="uploads-bar">
-        <button onClick={() => setOpen((o) => !o)} aria-expanded={open}>Uploads ▾</button>
-        <span className="fname" title={current?.file_name}>{current ? current.file_name : "Select an upload"}</span>
-        {current && <span className={`badge ${current.status}`}>{current.status}</span>}
+  if (!compact) {
+    return (
+      <div className="panel uploads">
+        {fileInput}
+        <div className="uploads-head">
+          <h2>Documents</h2>
+          <button className="icon-btn" title="Collapse the upload history" aria-label="Collapse the upload history" onClick={onToggleCollapse}>«</button>
+        </div>
+        <section className="up-sec">
+          <h3><span className="step">1</span> Upload a new file</h3>
+          <div className={`dropzone ${drag ? "drag" : ""}`} {...dropHandlers} onClick={openPicker}>
+            <div>Drag &amp; drop launch documents here</div>
+            <button className="primary" disabled={busy} onClick={(e) => { e.stopPropagation(); openPicker(); }}>
+              {busy ? "Uploading…" : "Upload file"}
+            </button>
+            <small>PDF, DOCX or images · up to 50 MB</small>
+          </div>
+        </section>
+        <section className="up-sec">
+          <h3><span className="step">2</span> Filter by vendor</h3>
+          {vendorSelect}
+        </section>
+        <section className="up-sec grow">
+          <h3>
+            <span className="step">3</span> Review past uploads
+            <span className="muted count">{filtered.length} of {uploads.length}</span>
+          </h3>
+          {filterNotes}
+          {list}
+        </section>
       </div>
-      {open && <div className="uploads-drop">{body}</div>}
+    );
+  }
+
+  // Collapsed (or narrow window): one slim bar above the grid; past uploads open as a dropdown
+  return (
+    <div className={`panel uploads compact ${drag ? "drag" : ""}`} ref={wrapRef} {...dropHandlers}>
+      {fileInput}
+      <div className="uploads-bar">
+        <button className="primary" disabled={busy} onClick={openPicker} title="Upload a new file (or drop it on this bar)">
+          {busy ? "Uploading…" : "Upload file"}
+        </button>
+        <button onClick={() => setOpen((o) => !o)} aria-expanded={open}>Past uploads ({filtered.length}) ▾</button>
+        <span className="fname" title={current?.file_name}>{current ? current.file_name : "No file selected"}</span>
+        {current && <span className={`badge ${current.status}`}>{current.status}</span>}
+        <span className="spacer" />
+        {vendorSelect}
+        {canExpand && (
+          <button className="icon-btn" title="Show the upload history panel" aria-label="Show the upload history panel" onClick={onToggleCollapse}>»</button>
+        )}
+      </div>
+      {open && (
+        <div className="uploads-drop">
+          <div className="drop-title">Review past uploads <span className="muted">{filtered.length} of {uploads.length}</span></div>
+          {filterNotes}
+          {list}
+        </div>
+      )}
     </div>
   );
 }
@@ -493,7 +588,7 @@ function AiProductPanel(props) {
   return <ProductPanel {...props} header={header} renderFieldExtra={extra} />;
 }
 
-function ReviewGrid({ uploadId, notify }) {
+function ReviewGrid({ uploadId, notify, vendor = "", onClearVendor }) {
   const [rows, setRows] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [filter, setFilter] = useState("all");
@@ -530,7 +625,8 @@ function ReviewGrid({ uploadId, notify }) {
   }
 
   async function changeStatus(status) {
-    const items = rows.filter((r) => selected.has(r.product_id)).map((r) => ({ product_id: r.product_id, version: r.version }));
+    // Only rows currently visible (status + vendor filter) are affected
+    const items = visible.filter((r) => selected.has(r.product_id)).map((r) => ({ product_id: r.product_id, version: r.version }));
     if (!items.length) return;
     try {
       const res = await api.setStatus(status, items);
@@ -546,7 +642,8 @@ function ReviewGrid({ uploadId, notify }) {
   async function publish() {
     try {
       notify("Publishing approved products to silver…", "ok");
-      const res = await api.publish(uploadId);
+      // With a vendor filter, publish only that vendor's approved products
+      const res = await api.publish(uploadId, vKey ? vrows.filter((r) => r.status === "approved").map((r) => r.product_id) : undefined);
       notify(`Published ${res.published} product(s)`, "ok");
       load(true);
     } catch (e) { notify(`Publish failed: ${e.message}`, "error"); }
@@ -574,15 +671,19 @@ function ReviewGrid({ uploadId, notify }) {
     t.style.setProperty("--pin3-left", `${c1.offsetWidth + c2.offsetWidth}px`);
   });
 
-  const visible = useMemo(() => rows.filter((r) => {
+  // Vendor filter first (case-insensitive Client match), then the status filter
+  const vKey = normVendor(vendor);
+  const vrows = useMemo(() => (vKey ? rows.filter((r) => normVendor(r.client_id) === vKey) : rows), [rows, vKey]);
+  useEffect(() => { setSelected(new Set()); }, [vKey]); // never act on rows hidden by the vendor filter
+  const visible = useMemo(() => vrows.filter((r) => {
     if (filter === "all") return true;
     if (filter === "issues") return r.validation_errors?.length > 0;
     return r.status === filter;
-  }), [rows, filter]);
+  }), [vrows, filter]);
 
   if (!uploadId) return <div className="panel grid empty-state">Select or upload a document to review its products.</div>;
 
-  const approvedCount = rows.filter((r) => r.status === "approved").length;
+  const approvedCount = vrows.filter((r) => r.status === "approved").length;
   const allSelected = visible.length > 0 && visible.every((r) => selected.has(r.product_id));
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(visible.filter((r) => r.status !== "published").map((r) => r.product_id)));
   const toggle = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -591,10 +692,10 @@ function ReviewGrid({ uploadId, notify }) {
     <div className="panel grid">
       <div className="toolbar">
         <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-          <option value="all">All ({rows.length})</option>
-          <option value="issues">With issues ({rows.filter((r) => r.validation_errors?.length).length})</option>
+          <option value="all">All ({vrows.length})</option>
+          <option value="issues">With issues ({vrows.filter((r) => r.validation_errors?.length).length})</option>
           {["pending", "approved", "rejected", "published"].map((s) => (
-            <option key={s} value={s}>{s} ({rows.filter((r) => r.status === s).length})</option>
+            <option key={s} value={s}>{s} ({vrows.filter((r) => r.status === s).length})</option>
           ))}
         </select>
         <div className="col-menu" ref={menuRef}>
@@ -621,8 +722,19 @@ function ReviewGrid({ uploadId, notify }) {
         <button disabled={!selected.size} onClick={() => changeStatus("pending")}>Back to pending</button>
         <button className="primary" disabled={!approvedCount} onClick={publish}>Publish {approvedCount} approved</button>
       </div>
+      {vKey && rows.length > 0 && (
+        <div className="vendor-banner">
+          Showing <b>{vendor.trim()}</b>: {vrows.length} of {rows.length} products ·
+          <button className="link" onClick={onClearVendor}>Clear filter</button>
+        </div>
+      )}
       {loading ? <div className="empty-state">Loading…</div> : !rows.length ? (
         <div className="empty-state">No products yet. Extraction can take a minute.</div>
+      ) : vKey && !vrows.length ? (
+        <div className="empty-state">
+          This upload has no products for <b>{vendor.trim()}</b>.{" "}
+          <button className="link" onClick={onClearVendor}>Clear the vendor filter</button>
+        </div>
       ) : (
         <div className={`table-wrap ${density === "compact" ? "compact" : ""}`}>
           <table ref={tableRef}>
@@ -911,6 +1023,10 @@ export default function App() {
 
   useEffect(() => { api.me().then(setMe).catch(() => {}); }, []);
   const narrow = useMediaQuery("(max-width: 1100px)");
+  // Shared by the upload history and the review grid; remembered per browser
+  const [vendor, setVendor] = useStoredState("plf.vendor", "");
+  const [collapsed, setCollapsed] = useStoredState("plf.uploads.collapsed", false);
+  const compactUploads = collapsed || narrow; // narrow windows always use the compact bar
 
   return (
     <div className="app">
@@ -925,9 +1041,13 @@ export default function App() {
       </header>
       <main>
         {tab === "review" ? (
-          <div className={`review-layout ${narrow ? "narrow" : ""}`}>
-            <UploadPanel selected={uploadId} onSelect={setUploadId} notify={notify} compact={narrow} />
-            <ReviewGrid uploadId={uploadId} notify={notify} />
+          <div className={`review-layout ${compactUploads ? "narrow" : ""}`}>
+            <UploadPanel
+              selected={uploadId} onSelect={setUploadId} notify={notify}
+              compact={compactUploads} canExpand={!narrow} onToggleCollapse={() => setCollapsed((c) => !c)}
+              vendor={vendor} onVendor={setVendor}
+            />
+            <ReviewGrid uploadId={uploadId} notify={notify} vendor={vendor} onClearVendor={() => setVendor("")} />
           </div>
         ) : tab === "check" ? (
           <IngestionCheck uploadId={uploadId} onSelect={setUploadId} onReview={() => setTab("review")} notify={notify} />

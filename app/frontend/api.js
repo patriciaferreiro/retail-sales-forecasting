@@ -44,7 +44,8 @@ export const api = {
   patch: (id, version, changes) => request("PATCH", `/api/products/${id}`, { version, changes }),
   setStatus: (status, items) => request("POST", "/api/products/status", { status, items }),
   audit: (id) => request("GET", `/api/products/${id}/audit`),
-  publish: (uploadId) => request("POST", "/api/publish", { upload_id: uploadId ?? null }),
+  publish: (uploadId, productIds) =>
+    request("POST", "/api/publish", { upload_id: uploadId ?? null, product_ids: productIds ?? null }),
   runForecast: () => request("POST", "/api/forecast/run"),
   runs: () => request("GET", "/api/forecast/runs"),
   run: (id) => request("GET", `/api/forecast/runs/${id}`),
