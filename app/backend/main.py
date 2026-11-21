@@ -229,7 +229,11 @@ def list_uploads():
                        count(*) FILTER (WHERE p.status='pending')   AS pending,
                        count(*) FILTER (WHERE p.status='approved')  AS approved,
                        count(*) FILTER (WHERE p.status='rejected')  AS rejected,
-                       count(*) FILTER (WHERE p.status='published') AS published
+                       count(*) FILTER (WHERE p.status='published') AS published,
+                       -- vendors = distinct product Client values (trimmed), for the vendor filter
+                       COALESCE(array_agg(DISTINCT btrim(p.client_id))
+                                FILTER (WHERE p.client_id IS NOT NULL AND btrim(p.client_id) <> ''),
+                                ARRAY[]::text[]) AS vendors
                 FROM {S}.uploads u LEFT JOIN {S}.review_products p USING (upload_id)
                 GROUP BY u.upload_id ORDER BY u.uploaded_at DESC LIMIT 200"""
         )
@@ -785,6 +789,8 @@ SILVER_COLS = (
 
 class PublishRequest(BaseModel):
     upload_id: uuid.UUID | None = None
+    # Optional: only these products (e.g. the ones visible under a vendor filter)
+    product_ids: list[uuid.UUID] | None = None
 
 
 @app.post("/api/publish")
@@ -798,6 +804,9 @@ def publish(body: PublishRequest, request: Request):
         if body.upload_id:
             q += " AND p.upload_id=%s"
             args = (body.upload_id,)
+        if body.product_ids is not None:
+            q += " AND p.product_id = ANY(%s)"
+            args = (*args, body.product_ids)
         cur.execute(q, args)
         rows = cur.fetchall()
     if not rows:
