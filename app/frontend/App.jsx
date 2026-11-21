@@ -990,6 +990,134 @@ function ForecastPage({ notify }) {
   );
 }
 
+// ------------------------------------------------------------------ architecture view
+// Node kinds map to Databricks product areas (colour-coded, see legend)
+const KINDS = {
+  user: { label: "User", cls: "k-user" },
+  app: { label: "Databricks App", cls: "k-app" },
+  uc: { label: "Unity Catalog storage (Delta / Volume)", cls: "k-uc" },
+  sql: { label: "SQL warehouse + AI functions", cls: "k-sql" },
+  lakebase: { label: "Lakebase Postgres", cls: "k-lb" },
+  ai: { label: "Model Serving (LLM)", cls: "k-ai" },
+  job: { label: "Lakeflow Jobs / pipelines", cls: "k-job" },
+};
+
+function Node({ kind, title, sub, href }) {
+  const body = (<><div className="n-title">{title}</div>{sub && <div className="n-sub">{sub}</div>}</>);
+  return href
+    ? <a className={`arch-node ${KINDS[kind].cls}`} href={href} target="_blank" rel="noreferrer" title="Open in Databricks">{body}</a>
+    : <div className={`arch-node ${KINDS[kind].cls}`}>{body}</div>;
+}
+
+function FlowRow({ n, title, nodes, note }) {
+  return (
+    <div className="arch-row">
+      <div className="arch-step"><span className="step">{n}</span> {title}</div>
+      <div className="arch-chain">
+        {nodes.map((nd, i) => (
+          <React.Fragment key={i}>
+            {i > 0 && <span className="arch-arrow" aria-hidden="true">{nd.label ? <small>{nd.label}</small> : null}→</span>}
+            <Node {...nd} />
+          </React.Fragment>
+        ))}
+      </div>
+      {note && <div className="arch-note">{note}</div>}
+    </div>
+  );
+}
+
+function ArchitectureView({ onClose }) {
+  const [a, setA] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => { api.architecture().then(setA).catch((e) => setErr(e.message)); }, []);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const lb = a?.lakebase;
+  const N = a && {
+    user: { kind: "user", title: "Business users", sub: "browser" },
+    app: { kind: "app", title: "Databricks App", sub: `${a.app.name} · React + FastAPI`, href: a.app.url },
+    volume: { kind: "uc", title: "UC Volume", sub: `${a.volume.name} (uploads/)`, href: a.volume.url },
+    wh: { kind: "sql", title: "SQL warehouse", sub: "ai_parse_document + ai_extract", href: a.warehouse.url },
+    whMerge: { kind: "sql", title: "SQL warehouse", sub: "MERGE (idempotent)", href: a.warehouse.url },
+    queue: { kind: "lakebase", title: "Lakebase review queue", sub: `${lb.project} · ${lb.schema}.review_products` },
+    audit: { kind: "lakebase", title: "Lakebase", sub: `${lb.schema}.review_audit (edit history)` },
+    sugg: { kind: "lakebase", title: "Lakebase", sub: `${lb.schema}.ai_suggestions` },
+    model: { kind: "ai", title: "Model Serving", sub: a.model.name, href: a.model.url },
+    silver: { kind: "uc", title: "Delta silver", sub: a.silver.name, href: a.silver.url },
+    job: { kind: "job", title: "Lakeflow Job", sub: `run_forecast · ai_forecast (12 weeks)`, href: a.job.url },
+    gold: { kind: "uc", title: "Delta gold", sub: a.gold.name, href: a.gold.url },
+    sync: { kind: "job", title: "Synced-table pipeline", sub: "sync_forecast_to_lakebase", href: a.job.url },
+    synced: { kind: "lakebase", title: "Lakebase synced table", sub: lb.synced_table || "gold.launch_forecasts_synced" },
+  };
+
+  return (
+    <div className="arch-overlay" onClick={onClose}>
+      <div className="arch-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Architecture">
+        <div className="arch-head">
+          <h2>Architecture &amp; data flow</h2>
+          <span className="muted">Components are read from this app's live configuration; click one to open it in Databricks.</span>
+          <span className="spacer" />
+          <button onClick={onClose} title="Close (Esc)">✕</button>
+        </div>
+        {err && <div className="empty-state">Could not load the architecture: {err}</div>}
+        {!a && !err && <div className="empty-state">Loading…</div>}
+        {a && (
+          <div className="arch-body">
+            <div className="arch-legend">
+              {Object.entries(KINDS).map(([k, v]) => <span key={k} className={`legend-item ${v.cls}`}>{v.label}</span>)}
+            </div>
+
+            <h3>In the app (interactive)</h3>
+            <FlowRow n="1" title="Upload" nodes={[N.user, N.app, N.volume]}
+                     note="Files go to the raw documents volume under uploads/, which the daily job skips." />
+            <FlowRow n="2" title="Extract" nodes={[N.volume, N.wh, N.queue]}
+                     note="Parses the document and extracts products; results and the document text land in the review queue as pending." />
+            <FlowRow n="3" title="Review & validate" nodes={[N.user, N.app, N.queue, N.audit]}
+                     note="Version-checked edits (safe for many reviewers), GTIN check digit / date / duplicate validation, audit trail." />
+            <FlowRow n="4" title="AI suggestion" nodes={[N.app, N.model, N.sugg]}
+                     note="Model proposes fixes for errors; each is re-validated and checked against the document; a reviewer applies or dismisses." />
+            <FlowRow n="5" title="Publish" nodes={[N.queue, N.whMerge, N.silver]}
+                     note="Approved products are merged into silver on document_id, so re-publishing never duplicates." />
+            <FlowRow n="6" title="Forecast" nodes={[N.app, N.job, N.gold]}
+                     note={`Runs job tasks ${a.job.tasks.join(", ")}; gold is replaced on each run (weekly, Monday-based).`} />
+            <FlowRow n="7" title="Serve the forecast" nodes={[N.gold, N.sync, N.synced, N.app]}
+                     note="Charts read the Lakebase copy (fast, no warehouse start); they fall back to gold via the warehouse." />
+
+            <h3>Daily batch pipeline (scheduled job)</h3>
+            <FlowRow n="B" title="Documents dropped by clients" nodes={[
+              { kind: "uc", title: "UC Volume", sub: `${a.volume.name} (outside uploads/)`, href: a.volume.url },
+              { kind: "job", title: "Lakeflow Job", sub: "setup_catalog → extract_product_data", href: a.job.url },
+              N.silver, N.job, N.gold,
+            ]} note="Same AI functions on the SQL warehouse, without human review; only new files are processed." />
+
+            <h3>Components</h3>
+            <table className="arch-table">
+              <thead><tr><th>Component</th><th>Databricks product</th><th>This deployment</th><th>Used for</th></tr></thead>
+              <tbody>
+                <tr><td>App</td><td>Databricks Apps</td><td><a href={a.app.url} target="_blank" rel="noreferrer">{a.app.name}</a></td><td>UI and API; runs as its own service principal</td></tr>
+                <tr><td>Governance</td><td>Unity Catalog</td><td><a href={a.catalog.url} target="_blank" rel="noreferrer">{a.catalog.name}</a></td><td>bronze / silver / gold schemas, grants to the app</td></tr>
+                <tr><td>Raw documents</td><td>UC Volume</td><td><a href={a.volume.url} target="_blank" rel="noreferrer">{a.volume.path}</a></td><td>Uploaded and client-dropped files</td></tr>
+                <tr><td>Compute</td><td>SQL warehouse (serverless)</td><td>{a.warehouse.url ? <a href={a.warehouse.url} target="_blank" rel="noreferrer">{a.warehouse.id}</a> : "–"}</td><td>ai_parse_document, ai_extract, MERGE, ai_forecast</td></tr>
+                <tr><td>Products</td><td>Delta table</td><td><a href={a.silver.url} target="_blank" rel="noreferrer">{a.silver.name}</a></td><td>Published, standardised products</td></tr>
+                <tr><td>Forecast</td><td>Delta table (change data feed)</td><td><a href={a.gold.url} target="_blank" rel="noreferrer">{a.gold.name}</a></td><td>12-week forecast with 90% interval</td></tr>
+                <tr><td>Review queue</td><td>Lakebase Postgres</td><td>{lb.project} / {lb.branch} / {lb.database}.{lb.schema}</td><td>{lb.tables.join(", ")}</td></tr>
+                <tr><td>Fast reads</td><td>Lakebase synced table</td><td>{lb.synced_table || "–"}</td><td>Forecast copy for charts</td></tr>
+                <tr><td>AI fixes</td><td>Model Serving (Foundation Model API)</td><td><a href={a.model.url} target="_blank" rel="noreferrer">{a.model.name}</a></td><td>Suggested corrections with evidence</td></tr>
+                <tr><td>Orchestration</td><td>Lakeflow Jobs</td><td>{a.job.url ? <a href={a.job.url} target="_blank" rel="noreferrer">job {a.job.id}</a> : "–"}</td><td>Daily pipeline, forecast runs, synced-table refresh</td></tr>
+                <tr><td>Deployment</td><td>Declarative Automation Bundle + Git</td><td>databricks.yml, resources/*.yml</td><td>Deploys the job, app, Lakebase project and synced table</td></tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ app shell
 export default function App() {
   const [tab, setTab] = useState("review");
@@ -1007,6 +1135,7 @@ export default function App() {
   // Shared by the upload history and the review grid; remembered per browser
   const [vendor, setVendor] = useStoredState("plf.vendor", "");
   const [collapsed, setCollapsed] = useStoredState("plf.uploads.collapsed", false);
+  const [showArch, setShowArch] = useState(false);
 
   return (
     <div className="app">
@@ -1017,8 +1146,10 @@ export default function App() {
           <button className={tab === "check" ? "on" : ""} onClick={() => setTab("check")}>Ingestion check</button>
           <button className={tab === "forecast" ? "on" : ""} onClick={() => setTab("forecast")}>Forecast</button>
         </nav>
+        <button className="arch-btn" onClick={() => setShowArch(true)} title="Architecture, Databricks components and data flow">Architecture</button>
         <span className="user">{me?.email}</span>
       </header>
+      {showArch && <ArchitectureView onClose={() => setShowArch(false)} />}
       <main>
         {tab === "review" ? (
           <div className={`review-layout ${collapsed ? "collapsed" : ""}`}>

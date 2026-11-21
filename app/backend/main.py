@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from . import config
 from .db import S, cursor, init_db, w
 from .extraction import extract_file, parse_text
-from .suggestions import ask_model
+from .suggestions import SERVING_ENDPOINT, ask_model
 from .validation import has_errors, normalize_identifier, parse_date, validate
 from .warehouse import SqlError, run_sql
 
@@ -187,6 +187,38 @@ def health():
         cur.execute("SELECT 1 AS ok")
         cur.fetchone()
     return {"status": "ok", "warehouse": bool(config.WAREHOUSE_ID), "job": bool(config.FORECAST_JOB_ID)}
+
+
+@app.get("/api/architecture")
+def architecture():
+    """The Databricks components this deployment actually uses (from its configuration), for the Architecture view."""
+    host = (w.config.host or "").rstrip("/")
+    parts = (config.LAKEBASE_ENDPOINT or "").split("/")  # projects/<p>/branches/<b>/endpoints/<e>
+    lb = dict(zip(parts[0::2], parts[1::2]))
+    cat = config.CATALOG
+
+    def table_url(full):
+        c, s, t = full.split(".")
+        return f"{host}/explore/data/{c}/{s}/{t}"
+
+    app_name = os.environ.get("DATABRICKS_APP_NAME", "product-launch-forecast")
+    return {
+        "host": host,
+        "app": {"name": app_name, "url": f"{host}/apps/{app_name}"},
+        "catalog": {"name": cat, "url": f"{host}/explore/data/{cat}"},
+        "volume": {"name": f"{cat}.bronze.raw_documents", "path": config.VOLUME_ROOT, "uploads": config.UPLOAD_ROOT,
+                   "url": f"{host}/explore/data/volumes/{cat}/bronze/raw_documents"},
+        "warehouse": {"id": config.WAREHOUSE_ID, "url": f"{host}/sql/warehouses/{config.WAREHOUSE_ID}" if config.WAREHOUSE_ID else None},
+        "silver": {"name": config.SILVER_TABLE, "url": table_url(config.SILVER_TABLE)},
+        "gold": {"name": config.GOLD_TABLE, "url": table_url(config.GOLD_TABLE)},
+        "job": {"id": config.FORECAST_JOB_ID, "tasks": config.FORECAST_TASK_KEYS,
+                "url": f"{host}/jobs/{config.FORECAST_JOB_ID}" if config.FORECAST_JOB_ID else None},
+        "lakebase": {"project": lb.get("projects"), "branch": lb.get("branches"), "endpoint": lb.get("endpoints"),
+                     "database": os.environ.get("PGDATABASE", "databricks_postgres"), "schema": S,
+                     "tables": ["uploads", "review_products", "review_audit", "ai_suggestions", "forecast_runs"],
+                     "synced_table": config.FORECAST_SYNCED_TABLE or None},
+        "model": {"name": SERVING_ENDPOINT, "url": f"{host}/ml/endpoints/{SERVING_ENDPOINT}"},
+    }
 
 
 @app.get("/api/me")
