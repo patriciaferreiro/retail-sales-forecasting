@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from . import config
 from .db import S, cursor, init_db, w
-from .extraction import extract_file
+from .extraction import extract_file, parse_text
 from .validation import has_errors, normalize_identifier, parse_date, validate
 from .warehouse import SqlError, run_sql
 
@@ -168,8 +168,9 @@ def run_extraction(upload_id) -> None:
                      Jsonb(issues)),
                 )
             cur.execute(
-                f"UPDATE {S}.uploads SET status='extracted', source_file=%s, extracted_at=now() WHERE upload_id=%s",
-                (result["source_file"], upload_id),
+                f"""UPDATE {S}.uploads SET status='extracted', source_file=%s, parsed_text=%s, extracted_at=now()
+                    WHERE upload_id=%s""",
+                (result["source_file"], result.get("parsed_text"), upload_id),
             )
     except Exception as exc:  # surface any failure on the upload row
         log.exception("Extraction failed for %s", upload_id)
@@ -300,6 +301,28 @@ def upload_file(upload_id: uuid.UUID):
     )
 
 
+def get_parsed_text(upload_id: uuid.UUID) -> str | None:
+    """Stored document text; uploads that predate the column are parsed once and cached."""
+    with cursor() as cur:
+        cur.execute(f"SELECT volume_path, parsed_text FROM {S}.uploads WHERE upload_id=%s", (upload_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Upload not found")
+    if row["parsed_text"]:
+        return row["parsed_text"]
+    text = parse_text(row["volume_path"])
+    if text:
+        with cursor() as cur:
+            cur.execute(f"UPDATE {S}.uploads SET parsed_text=%s WHERE upload_id=%s AND parsed_text IS NULL",
+                        (text, upload_id))
+    return text
+
+
+@app.get("/api/uploads/{upload_id}/text")
+def upload_text(upload_id: uuid.UUID):
+    return {"upload_id": upload_id, "text": get_parsed_text(upload_id)}
+
+
 def _as_text(v):
     if v is None:
         return None
@@ -372,6 +395,92 @@ def upload_fields(upload_id: uuid.UUID):
             "fields_edited": edited_count,
         },
         "products": products,
+    }
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[\s\-_.,;:/|]+", "", s).lower()
+
+
+def found_in_document(field: str, value, doc_norm: str | None):
+    """True/False if the value occurs in the document text (whitespace/punctuation-insensitive), None if unknown."""
+    if value in (None, "") or doc_norm is None:
+        return None
+    candidates = [str(value)]
+    if field == "launch_date":
+        d = parse_date(value)
+        if d:  # documents usually print European formats
+            candidates += [d.strftime("%d.%m.%Y"), d.strftime("%d/%m/%Y"), d.strftime("%d-%m-%Y"), d.strftime("%d.%m.%y")]
+    return any(_norm(c) and _norm(c) in doc_norm for c in candidates)
+
+
+@app.get("/api/products/{product_id}/detail")
+def product_detail(product_id: uuid.UUID):
+    """One product with its fields (extracted vs current, checks, found in document) and neighbours."""
+    keys = published_keys()
+    with cursor() as cur:
+        cur.execute(f"SELECT * FROM {S}.review_products WHERE product_id=%s", (product_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Product not found")
+        row = _with_validation(cur, row, keys)
+        cur.execute(
+            f"""SELECT upload_id, file_name, volume_path, status, error, uploaded_by, uploaded_at, extracted_at
+                FROM {S}.uploads WHERE upload_id=%s""",
+            (row["upload_id"],),
+        )
+        upload = cur.fetchone()
+        cur.execute(
+            f"""SELECT product_id FROM {S}.review_products WHERE upload_id=%s
+                ORDER BY article_description NULLS LAST, product_id""",
+            (row["upload_id"],),
+        )
+        order = [r["product_id"] for r in cur.fetchall()]
+        cur.execute(
+            f"""SELECT DISTINCT ON (field) field, old_value FROM {S}.review_audit
+                WHERE product_id=%s AND field <> 'status' ORDER BY field, changed_at, audit_id""",
+            (product_id,),
+        )
+        first_old = {a["field"]: a["old_value"] for a in cur.fetchall()}
+
+    try:
+        doc_text = get_parsed_text(row["upload_id"])
+    except Exception as exc:  # preview still works without text
+        log.warning("No document text for %s: %s", row["upload_id"], exc)
+        doc_text = None
+    doc_norm = _norm(doc_text) if doc_text else None
+
+    fields = []
+    for f in EDITABLE_FIELDS:
+        current = _as_text(row.get(f))
+        edited = f in first_old
+        if edited:
+            extracted = first_old[f]
+        elif f == "launch_date" and row.get("launch_date_raw"):
+            extracted = row["launch_date_raw"]
+        else:
+            extracted = current
+        issues = [i for i in row["validation_errors"] if i["field"] == f]
+        status = "error" if any(i["severity"] == "error" for i in issues) else "warning" if issues else "ok"
+        fields.append({
+            "field": f, "extracted": extracted, "current": current, "edited": edited,
+            "status": status, "issues": issues,
+            "found_in_document": found_in_document(f, current, doc_norm),
+        })
+
+    idx = order.index(product_id) if product_id in order else -1
+    ext = os.path.splitext(upload["volume_path"])[1].lower()
+    return {
+        "product": {k: row[k] for k in ("product_id", "upload_id", "status", "version", "article_description",
+                                          "updated_by", "updated_at")},
+        "upload": {**{k: v for k, v in upload.items() if k != "volume_path"},
+                   "preview": "image" if ext in (".png", ".jpg", ".jpeg") else "pdf" if ext == ".pdf" else "download"},
+        "fields": fields,
+        "has_document_text": doc_text is not None,
+        "position": idx + 1,
+        "total": len(order),
+        "prev_id": order[idx - 1] if idx > 0 else None,
+        "next_id": order[idx + 1] if 0 <= idx < len(order) - 1 else None,
     }
 
 

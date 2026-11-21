@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS {S}.uploads (
   uploaded_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   extracted_at TIMESTAMPTZ
 );
+-- Readable text of the document as parsed by ai_parse_document (for validation and AI suggestions)
+ALTER TABLE {S}.uploads ADD COLUMN IF NOT EXISTS parsed_text TEXT;
 
 CREATE TABLE IF NOT EXISTS {S}.review_products (
   product_id          UUID PRIMARY KEY,
