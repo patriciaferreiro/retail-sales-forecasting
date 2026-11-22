@@ -7,19 +7,22 @@
 # MAGIC CREATE OR REPLACE TEMPORARY VIEW parsed_documents AS
 # MAGIC WITH new_files AS (
 # MAGIC   SELECT
-# MAGIC     f._metadata.file_name AS file_name,
-# MAGIC     f._metadata.file_path AS file_path,
-# MAGIC     f._metadata.file_modification_time AS received_at,
+# MAGIC     element_at(split(f.path, '/'), -1) AS file_name,
+# MAGIC     f.path AS file_path,
+# MAGIC     f.modificationTime AS received_at,
 # MAGIC     f.content
 # MAGIC   FROM READ_FILES(
 # MAGIC     '/Volumes/${catalog}/bronze/raw_documents/',
-# MAGIC     format => 'binaryFile'
+# MAGIC     format => 'binaryFile',
+# MAGIC     -- Explicit schema so an empty volume returns 0 rows instead of failing
+# MAGIC     -- (with no files, read_files has no columns and no _metadata to resolve)
+# MAGIC     schema => 'path STRING, modificationTime TIMESTAMP, length BIGINT, content BINARY'
 # MAGIC   ) AS f
 # MAGIC   -- uploads/ is owned by the app: those files are reviewed there before reaching silver
-# MAGIC   WHERE f._metadata.file_path NOT LIKE '%/raw_documents/uploads/%'
+# MAGIC   WHERE f.path NOT LIKE '%/raw_documents/uploads/%'
 # MAGIC     AND NOT EXISTS (
 # MAGIC     SELECT 1 FROM ${catalog}.silver.product_launches s
-# MAGIC     WHERE s.source_file = f._metadata.file_path
+# MAGIC     WHERE s.source_file = f.path
 # MAGIC   )
 # MAGIC ),
 # MAGIC parsed_files AS (
