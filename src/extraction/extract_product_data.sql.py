@@ -50,7 +50,7 @@
 # MAGIC   ai_extract(
 # MAGIC     parsed,
 # MAGIC     '{
-# MAGIC       "client_name": {"type": "string", "description": "Name of the brand or client"},
+# MAGIC       "client_name": {"type": "string", "description": "Short client name as used by the retailer, without legal-form suffixes (AG, GmbH, KGaA, SE, & Co.). For Beiersdorf use NIVEA. Examples: NIVEA, Henkel, Unilever"},
 # MAGIC       "launch_date": {"type": "string", "description": "Cutover/launch date in YYYY-MM-DD format. Look for dates, KWLT (Kalenderwoche Liefertermin), or similar"},
 # MAGIC       "products": {
 # MAGIC         "type": "array",

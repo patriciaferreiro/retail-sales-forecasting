@@ -6,7 +6,7 @@ from .warehouse import run_sql
 
 # Kept identical to src/extraction/extract_product_data so the app and the daily job agree.
 EXTRACT_SCHEMA = """{
-  "client_name": {"type": "string", "description": "Name of the brand or client"},
+  "client_name": {"type": "string", "description": "Short client name as used by the retailer, without legal-form suffixes (AG, GmbH, KGaA, SE, & Co.). For Beiersdorf use NIVEA. Examples: NIVEA, Henkel, Unilever"},
   "launch_date": {"type": "string", "description": "Cutover/launch date in YYYY-MM-DD format. Look for dates, KWLT (Kalenderwoche Liefertermin), or similar"},
   "products": {
     "type": "array",
