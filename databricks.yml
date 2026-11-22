@@ -24,7 +24,7 @@ variables:
     default: product-launch-forecast
   genie_space_id:
     description: Genie space the app's Ask Genie panel uses (sales forecasts and changeover impact)
-    default: 01f1e5a99d2d1c66aef6ac589e154cd7
+    default: 01f1e6612342119ab7b18d1c5e460db0
 
 targets:
   dev:
@@ -33,7 +33,7 @@ targets:
     workspace:
       host: https://fevm-patricia-aws-serverless.cloud.databricks.com
     variables:
-      warehouse_id: 4471bd9074d14824
+      warehouse_id: 8798ee4dedf46420
 
   prod:
     mode: production
